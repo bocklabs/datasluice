@@ -379,13 +379,13 @@ def test_malformed_topic_pages_are_rejected_before_dispatch(page: object) -> Non
 def test_an_oversized_topic_page_never_reaches_a_route(page_size: int) -> None:
     """The ceiling is enforced inside the input, so no request is built or dispatched."""
     router = sync_route_table(with_site_route({}))
-    with sync_client(router, None) as client:
+    with sync_client(router, None):
         with pytest.raises(ValueError, match="page_size"):
-            client.topics.list_topics(TopicListQuery(page_size=page_size))
+            TopicListQuery(page_size=page_size)
         with pytest.raises(ValueError, match="page_size"):
-            client.topics.search_topics(TopicSearchQuery(page_size=page_size))
+            TopicSearchQuery(page_size=page_size)
         with pytest.raises(ValueError, match="page_size"):
-            client.topics.topic_elements("topic-1", TopicElementsQuery(page_size=page_size))
+            TopicElementsQuery(page_size=page_size)
     assert router.requests == []
 
 
@@ -417,8 +417,9 @@ _MALFORMED_SEGMENTS = (
 @pytest.mark.parametrize("identifier", _MALFORMED_SEGMENTS)
 def test_malformed_topic_segments_never_reach_a_route(identifier: object) -> None:
     """Dot segments, separators, and control characters must be refused, not quoted."""
+    invalid_identifier = cast("str", identifier)
     with pytest.raises(CatalogValidationError, match="one URL-safe path segment"):
-        segment(cast("str", identifier), wire.GET_TOPIC_OPERATION)
+        segment(invalid_identifier, wire.GET_TOPIC_OPERATION)
 
 
 @pytest.mark.parametrize("identifier", _MALFORMED_SEGMENTS)
@@ -431,16 +432,16 @@ def test_malformed_topic_identifiers_are_stopped_before_any_request(identifier: 
             client.topics.get_topic(value)
         with pytest.raises(CatalogValidationError, match="one URL-safe path segment"):
             client.topics.topic_elements(value)
+        delete_policy = mutation_policy(wire.DELETE_TOPIC_OPERATION, "topic-1", destructive=True)
         with pytest.raises(CatalogValidationError, match="one URL-safe path segment"):
             client.topics.delete_topic(
                 value,
                 PERMISSIONS,
-                mutation_policy(wire.DELETE_TOPIC_OPERATION, "topic-1", destructive=True),
+                delete_policy,
             )
+        feature_policy = mutation_policy(wire.FEATURE_TOPIC_OPERATION, "topic-1")
         with pytest.raises(CatalogValidationError, match="one URL-safe path segment"):
-            client.topics.feature_topic(
-                value, ADMIN_PERMISSIONS, mutation_policy(wire.FEATURE_TOPIC_OPERATION, "topic-1")
-            )
+            client.topics.feature_topic(value, ADMIN_PERMISSIONS, feature_policy)
     assert router.requests == []
 
 
@@ -450,20 +451,23 @@ def test_malformed_topic_element_identifiers_are_stopped_before_any_request(elem
     value = cast("str", element_id)
     router = sync_route_table(with_site_route({}))
     with sync_client(router, PERMISSIONS) as client:
+        element = TopicElementInput(title="A dataset")
+        update_policy = mutation_policy(wire.TOPIC_ELEMENT_UPDATE_OPERATION, "topic-1:element-1")
         with pytest.raises(CatalogValidationError, match="one URL-safe path segment"):
             client.topics.topic_element_update(
                 "topic-1",
                 value,
-                TopicElementInput(title="A dataset"),
+                element,
                 PERMISSIONS,
-                mutation_policy(wire.TOPIC_ELEMENT_UPDATE_OPERATION, "topic-1:element-1"),
+                update_policy,
             )
+        delete_policy = mutation_policy(wire.TOPIC_ELEMENT_DELETE_OPERATION, "topic-1:element-1", destructive=True)
         with pytest.raises(CatalogValidationError, match="one URL-safe path segment"):
             client.topics.topic_element_delete(
                 "topic-1",
                 value,
                 PERMISSIONS,
-                mutation_policy(wire.TOPIC_ELEMENT_DELETE_OPERATION, "topic-1:element-1", destructive=True),
+                delete_policy,
             )
     assert router.requests == []
 
@@ -487,8 +491,9 @@ _MALFORMED_ELEMENT_REFERENCES: tuple[object, ...] = (
 @pytest.mark.parametrize("reference", _MALFORMED_ELEMENT_REFERENCES)
 def test_malformed_topic_element_references_never_reach_a_route(reference: object) -> None:
     """A body-borne identifier gets the shared segment policy before it is serialized."""
+    invalid_reference = cast("dict[str, str]", reference)
     with pytest.raises((ValueError, CatalogValidationError)):
-        TopicElementInput(element=cast("dict[str, str]", reference))
+        TopicElementInput(element=invalid_reference)
 
 
 def test_topic_element_requires_a_title_or_a_linked_element() -> None:
@@ -569,10 +574,11 @@ _MALFORMED_SEARCH_FILTERS = ("nope", "geozone", "granularity", "dataset", "owner
 @pytest.mark.parametrize("sort", _MALFORMED_SORTS)
 def test_malformed_topic_sorts_are_rejected_before_dispatch(sort: object) -> None:
     """The pinned parser offers exactly `sort` and its negated forms for three keys."""
+    invalid_sort = cast("str", sort)
     with pytest.raises(ValueError, match="sort"):
-        TopicListQuery(sort=cast("str", sort))
+        TopicListQuery(sort=invalid_sort)
     with pytest.raises(ValueError, match="sort"):
-        TopicSearchQuery(sort=cast("str", sort))
+        TopicSearchQuery(sort=invalid_sort)
 
 
 @pytest.mark.parametrize("key", _MALFORMED_LIST_FILTERS)
@@ -622,19 +628,23 @@ def test_topic_filters_freeze_to_immutable_json_safe_mappings() -> None:
     ]
     with pytest.raises(TypeError):
         cast("dict[str, object]", query.filters)["tag"] = ("x",)
+    invalid_tags = cast("tuple[str, ...]", {1, 2})
     with pytest.raises(ValueError, match="must be a string, boolean, or tuple of non-empty strings"):
-        TopicListQuery(filters={"tag": cast("tuple[str, ...]", {1, 2})})
+        TopicListQuery(filters={"tag": invalid_tags})
 
 
 def test_topic_inputs_reject_malformed_scalar_fields() -> None:
     with pytest.raises(ValueError, match="name"):
         TopicCreateInput(name="")
+    invalid_private = cast("bool", "yes")
+    invalid_color = cast("int", "3")
+    invalid_tags = cast("tuple[str, ...]", ["health"])
     with pytest.raises(ValueError, match="private"):
-        TopicCreateInput(name="Health", private=cast("bool", "yes"))
+        TopicCreateInput(name="Health", private=invalid_private)
     with pytest.raises(ValueError, match="color"):
-        TopicCreateInput(name="Health", color=cast("int", "3"))
+        TopicCreateInput(name="Health", color=invalid_color)
     with pytest.raises(ValueError, match="tags"):
-        TopicCreateInput(name="Health", tags=cast("tuple[str, ...]", ["health"]))
+        TopicCreateInput(name="Health", tags=invalid_tags)
     with pytest.raises(ValueError, match="at least one field"):
         TopicUpdateInput()
     with pytest.raises(ValueError, match="elements"):
@@ -781,8 +791,9 @@ def test_topic_permissions_discriminate_each_route_in_both_modes() -> None:
         with sync_client(router, UDATA_CREDENTIAL) as client:
             with pytest.raises(ForbiddenError) as denied_delete:
                 client.topics.delete_topic("topic-1", CREATE_ONLY_PERMISSIONS, delete_policy)
+            topic = TopicCreateInput(name="Health")
             with pytest.raises(ForbiddenError) as denied_create:
-                client.topics.create_topic(TopicCreateInput(name="Health"), DELETE_ONLY_PERMISSIONS, create_policy)
+                client.topics.create_topic(topic, DELETE_ONLY_PERMISSIONS, create_policy)
             with pytest.raises(ForbiddenError) as denied_feature:
                 client.topics.feature_topic("topic-1", PERMISSIONS, feature_policy)
             assert denied_delete.value.operation == wire.DELETE_TOPIC_OPERATION
@@ -809,10 +820,9 @@ def test_topic_permissions_discriminate_each_route_in_both_modes() -> None:
         async with async_client(router, UDATA_CREDENTIAL) as client:
             with pytest.raises(ForbiddenError) as denied_delete:
                 await client.topics.delete_topic("topic-1", CREATE_ONLY_PERMISSIONS, delete_policy)
+            topic = TopicCreateInput(name="Health")
             with pytest.raises(ForbiddenError) as denied_create:
-                await client.topics.create_topic(
-                    TopicCreateInput(name="Health"), DELETE_ONLY_PERMISSIONS, create_policy
-                )
+                await client.topics.create_topic(topic, DELETE_ONLY_PERMISSIONS, create_policy)
             with pytest.raises(ForbiddenError) as denied_feature:
                 await client.topics.feature_topic("topic-1", PERMISSIONS, feature_policy)
             assert denied_delete.value.operation == wire.DELETE_TOPIC_OPERATION
@@ -856,16 +866,15 @@ def test_destructive_topic_mutations_require_a_confirmed_destructive_policy(
         arguments.insert(1, "element-1")
     router = sync_route_table(with_site_route({}))
     with sync_client(router, UDATA_CREDENTIAL) as client:
+        mutate = cast("Any", getattr(client.topics, method))
         with pytest.raises(ForbiddenError) as missing:
-            cast("Any", getattr(client.topics, method))(*arguments, None)
+            mutate(*arguments, None)
+        unbound_policy = mutation_policy(operation, "some-other-target", destructive=destructive)
         with pytest.raises(ForbiddenError) as unbound:
-            cast("Any", getattr(client.topics, method))(
-                *arguments, mutation_policy(operation, "some-other-target", destructive=destructive)
-            )
+            mutate(*arguments, unbound_policy)
+        understated_policy = mutation_policy(operation, target, destructive=False)
         with pytest.raises(ForbiddenError) as understated:
-            cast("Any", getattr(client.topics, method))(
-                *arguments, mutation_policy(operation, target, destructive=False)
-            )
+            mutate(*arguments, understated_policy)
     assert missing.value.operation == operation
     assert unbound.value.operation == operation
     assert understated.value.operation == operation
@@ -920,8 +929,9 @@ def test_malformed_topic_read_bodies_fail_typed_without_a_raw_body(payload: obje
     routes: RouteTable = {("GET", f"{ORIGIN}{path}"): (200, payload) for _, _, path in _TOPIC_READS}
     with sync_client(sync_route_table(with_site_route(routes)), None) as client:
         for method, arguments, _ in _TOPIC_READS:
+            read = cast("Any", getattr(client.topics, method))
             with pytest.raises(CatalogValidationError):
-                cast("Any", getattr(client.topics, method))(*arguments)
+                read(*arguments)
 
 
 _NON_FINITE_LITERALS = (b"NaN", b"Infinity", b"-Infinity")
@@ -938,8 +948,10 @@ def test_non_finite_topic_responses_fail_typed_without_a_raw_body(
         ("GET", f"{ORIGIN}/api/1/site/"): (200, json.dumps(UDATA_SITE).encode()),
         ("GET", f"{ORIGIN}{path}"): (200, shape.replace(b"@@", literal)),
     }
-    with sync_client(sync_route_table(routes), None) as client, pytest.raises(NativeCatalogError) as raised:
-        cast("Any", getattr(client.topics, method))(*arguments)
+    with sync_client(sync_route_table(routes), None) as client:
+        read = cast("Any", getattr(client.topics, method))
+        with pytest.raises(NativeCatalogError) as raised:
+            read(*arguments)
     rendered = repr(raised.value) + str(raised.value.__dict__)
     assert literal.decode() not in rendered
     assert "secret-key" not in rendered
@@ -951,6 +963,8 @@ def test_topic_routes_require_a_controlled_origin_for_every_mutation() -> None:
     public_router = sync_route_table(
         {("GET", f"{public_origin}/api/1/site/"): (200, UDATA_SITE)},
     )
+    topic = TopicCreateInput(name="Health")
+    policy = mutation_policy(wire.CREATE_TOPIC_OPERATION, "Health")
     with (
         SyncUDataClient(
             public_router,
@@ -960,9 +974,7 @@ def test_topic_routes_require_a_controlled_origin_for_every_mutation() -> None:
         ) as client,
         pytest.raises(CatalogValidationError, match="controlled local deployment"),
     ):
-        client.topics.create_topic(
-            TopicCreateInput(name="Health"), PERMISSIONS, mutation_policy(wire.CREATE_TOPIC_OPERATION, "Health")
-        )
+        client.topics.create_topic(topic, PERMISSIONS, policy)
     assert _topic_requests(public_router) == []
 
 
@@ -1166,11 +1178,12 @@ def test_topic_mutation_cancellation_settles_as_cancelled_not_failed() -> None:
         retry_sleep=lambda _: None,
         owns_transport=True,
     )
+    policy = mutation_policy(wire.DELETE_TOPIC_OPERATION, "topic-1", destructive=True)
     with pytest.raises(KeyboardInterrupt) as raised:
         client.topics.delete_topic(
             "topic-1",
             PERMISSIONS,
-            mutation_policy(wire.DELETE_TOPIC_OPERATION, "topic-1", destructive=True),
+            policy,
         )
     receipt = cast("MutationReceipt", raised.value.__dict__["mutation_receipt"])
     assert receipt.outcome == "cancelled"
@@ -1273,11 +1286,12 @@ def test_topic_sync_timed_out_mutation_keeps_failed_receipt_and_ready_post_state
         retry_sleep=lambda _: None,
         owns_transport=True,
     )
+    policy = mutation_policy(wire.DELETE_TOPIC_OPERATION, "topic-1", destructive=True)
     with pytest.raises(TimeoutError) as stopped:
         client.topics.delete_topic(
             "topic-1",
             PERMISSIONS,
-            mutation_policy(wire.DELETE_TOPIC_OPERATION, "topic-1", destructive=True),
+            policy,
         )
     receipt = cast("MutationReceipt", stopped.value.__dict__["mutation_receipt"])
     assert receipt.outcome == "failed"
@@ -1301,11 +1315,12 @@ def test_topic_async_timed_out_mutation_keeps_failed_receipt_and_ready_post_stat
     )
 
     async def run() -> None:
+        policy = mutation_policy(wire.DELETE_TOPIC_OPERATION, "topic-1", destructive=True)
         with pytest.raises(TimeoutError) as stopped:
             await client.topics.delete_topic(
                 "topic-1",
                 PERMISSIONS,
-                mutation_policy(wire.DELETE_TOPIC_OPERATION, "topic-1", destructive=True),
+                policy,
             )
         receipt = cast("MutationReceipt", stopped.value.__dict__["mutation_receipt"])
         assert receipt.outcome == "failed"

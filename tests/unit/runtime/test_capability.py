@@ -126,16 +126,18 @@ class _AsyncCountingRunner:
 
 def test_deployment_origin_must_be_https() -> None:
     operation = _operation()
+    profile = _profile(operation)
     with pytest.raises(ValueError, match="sanitized HTTPS origins"):
-        EffectiveCapabilityCache(_profile(operation), deployment_origin="http://catalog.example.test")
+        EffectiveCapabilityCache(profile, deployment_origin="http://catalog.example.test")
 
 
 def test_deployment_origin_strips_the_mount_path_but_rejects_credentials() -> None:
     operation = _operation()
     cache = EffectiveCapabilityCache(_profile(operation), deployment_origin="https://catalog.example.test/mount")
     assert cache._deployment_origin == "https://catalog.example.test"
+    profile = _profile(operation)
     with pytest.raises(ValueError, match="sanitized HTTPS origins"):
-        EffectiveCapabilityCache(_profile(operation), deployment_origin="https://user:secret@catalog.example.test")
+        EffectiveCapabilityCache(profile, deployment_origin="https://user:secret@catalog.example.test")
 
 
 def test_first_resolve_probes_once_and_caches_the_effective_state() -> None:

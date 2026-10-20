@@ -4,22 +4,19 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from datasluice.contracts.catalog.protocols import (
-    AsyncCatalogClient,
-    AsyncManagedExecutor,
-    CatalogConnectorContext,
-    SyncCatalogClient,
-    SyncManagedExecutor,
-)
+from datasluice.connectors.catalog._lifecycle import _ConnectorLifecycle
 
 if TYPE_CHECKING:
-    from types import TracebackType
-
     from datasluice.contracts.catalog.native.udata import AsyncUDataServices, SyncUDataServices
+    from datasluice.contracts.catalog.protocols import (
+        AsyncCatalogClient,
+        CatalogConnectorContext,
+        SyncCatalogClient,
+    )
     from datasluice.domain.catalog.profiles import EffectiveCapabilityProfile
 
 
-class UDataConnector:
+class UDataConnector(_ConnectorLifecycle):
     """Expose injected uData service projections without a transport implementation."""
 
     def __init__(
@@ -32,44 +29,9 @@ class UDataConnector:
         native_async: AsyncUDataServices,
         effective_profile: EffectiveCapabilityProfile,
     ) -> None:
-        self._sync_executor = SyncManagedExecutor(context)
-        self._async_executor = AsyncManagedExecutor(context)
+        super().__init__(context)
         self.normalized_sync = normalized_sync
         self.normalized_async = normalized_async
         self.native_sync = native_sync
         self.native_async = native_async
         self.effective_profile = effective_profile
-
-    def close(self) -> None:
-        """Release the synchronous executor only when the context owns it."""
-        self._sync_executor.close()
-
-    def __enter__(self) -> UDataConnector:
-        """Enter the synchronous façade context."""
-        return self
-
-    def __exit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc_value: BaseException | None,
-        traceback: TracebackType | None,
-    ) -> None:
-        """Release synchronous resources on context exit."""
-        self.close()
-
-    async def aclose(self) -> None:
-        """Release the asynchronous executor only when the context owns it."""
-        await self._async_executor.aclose()
-
-    async def __aenter__(self) -> UDataConnector:
-        """Enter the asynchronous façade context."""
-        return self
-
-    async def __aexit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc_value: BaseException | None,
-        traceback: TracebackType | None,
-    ) -> None:
-        """Release asynchronous resources on context exit."""
-        await self.aclose()

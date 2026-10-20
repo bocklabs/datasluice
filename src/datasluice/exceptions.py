@@ -23,18 +23,6 @@ class ConnectorNotFoundError(DataSluiceError):
     """Raised when no connector is registered for a requested name."""
 
 
-class AuthenticationError(DataSluiceError):
-    """Raised when authentication credentials are missing or invalid."""
-
-
-class RateLimitError(PortalError):
-    """Raised when the portal rate-limits requests."""
-
-    def __init__(self, message: str, retry_after: float | None = None) -> None:
-        super().__init__(message)
-        self.retry_after = retry_after
-
-
 class RetryableHTTPError(PortalError):
     """Raised on HTTP 5xx responses, or transport-level failures, that should be retried.
 
@@ -45,10 +33,6 @@ class RetryableHTTPError(PortalError):
     def __init__(self, message: str, status_code: int = 0) -> None:
         super().__init__(message)
         self.status_code = status_code
-
-
-class NotFoundError(PortalError):
-    """Raised when a requested dataset or resource does not exist."""
 
 
 class DownloadError(DataSluiceError):

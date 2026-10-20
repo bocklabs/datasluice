@@ -356,12 +356,13 @@ def test_reuse_link_mutations_bind_the_relationship_target(
         result = getattr(client.reuses, method_name)("reuse-1", linked_id, PERMISSIONS, _policy(operation, target))
         assert result.receipt.target.value == target
         assert result.receipt.outcome == "succeeded"
+        method = getattr(client.reuses, method_name)
+        unbound_policy = _policy(operation, "reuse-1")
         with pytest.raises(ForbiddenError):
-            getattr(client.reuses, method_name)("reuse-1", linked_id, PERMISSIONS, _policy(operation, "reuse-1"))
+            method("reuse-1", linked_id, PERMISSIONS, unbound_policy)
+        wrong_target_policy = _policy(operation, f"reuse-1:{linked_id}x")
         with pytest.raises(ForbiddenError):
-            getattr(client.reuses, method_name)(
-                "reuse-1", linked_id, PERMISSIONS, _policy(operation, f"reuse-1:{linked_id}x")
-            )
+            method("reuse-1", linked_id, PERMISSIONS, wrong_target_policy)
     assert len([r for r in router.requests if "/reuses/" in r.url]) == 1
 
 
@@ -396,10 +397,10 @@ def test_reuse_link_mutations_bind_the_relationship_target_in_async_mode(
                 "reuse-1", linked_id, PERMISSIONS, _policy(operation, target)
             )
             assert result.receipt.target.value == target
+            method = getattr(client.reuses, method_name)
+            unbound_policy = _policy(operation, "reuse-1")
             with pytest.raises(ForbiddenError):
-                await getattr(client.reuses, method_name)(
-                    "reuse-1", linked_id, PERMISSIONS, _policy(operation, "reuse-1")
-                )
+                await method("reuse-1", linked_id, PERMISSIONS, unbound_policy)
 
     asyncio.run(run())
     assert len([r for r in router.requests if "/reuses/" in r.url]) == 1
@@ -473,8 +474,9 @@ def test_reuse_create_retargets_the_success_receipt_in_async_mode() -> None:
 @pytest.mark.parametrize("boolean_filter", ["yes", "true", ("true",), ()])
 def test_reuse_documented_boolean_filters_reject_non_boolean_values(boolean_filter: object) -> None:
     """``featured`` is documented as a boolean filter, so a non-boolean must be rejected."""
+    invalid_filter = cast("str | bool | tuple[str, ...]", boolean_filter)
     with pytest.raises(ValueError, match="must be a boolean"):
-        ReuseListQuery(filters={"featured": cast("str | bool | tuple[str, ...]", boolean_filter)})
+        ReuseListQuery(filters={"featured": invalid_filter})
 
 
 @pytest.mark.parametrize("query_type", [ReuseListQuery, ReuseSearchQuery])
@@ -545,10 +547,9 @@ def test_reuse_badge_addition_validates_the_badge_kind_before_dispatch() -> None
     router = atom_sync_route_table(with_site_route({}))
     with sync_client(router, UDATA_CREDENTIAL) as client:
         for badge_kind in (cast("str", {"kind": "badger"}), "bad/kind"):
+            policy = _policy(wire.ADD_REUSE_BADGE_OPERATION, "reuse-1")
             with pytest.raises(CatalogValidationError, match="URL-safe segment"):
-                client.reuses.add_reuse_badge(
-                    "reuse-1", badge_kind, ADMIN_PERMISSIONS, _policy(wire.ADD_REUSE_BADGE_OPERATION, "reuse-1")
-                )
+                client.reuses.add_reuse_badge("reuse-1", badge_kind, ADMIN_PERMISSIONS, policy)
     assert router.requests == []
 
 
@@ -566,8 +567,10 @@ def test_feature_admin_operations_refuse_non_admin_credentials_before_dispatch(m
     operation = wire.FEATURE_REUSE_OPERATION if method_name == "feature_reuse" else wire.UNFEATURE_REUSE_OPERATION
     with sync_client(router, UDATA_CREDENTIAL) as client:
         getattr(client.reuses, method_name)("reuse-1", ADMIN_PERMISSIONS, _policy(operation, "reuse-1"))
+        method = getattr(client.reuses, method_name)
+        policy = _policy(operation, "reuse-1")
         with pytest.raises(ForbiddenError):
-            getattr(client.reuses, method_name)("reuse-1", PERMISSIONS, _policy(operation, "reuse-1"))
+            method("reuse-1", PERMISSIONS, policy)
 
 
 @pytest.mark.parametrize("method_name", ("add_reuse_badge", "delete_reuse_badge"))
@@ -584,12 +587,14 @@ def test_badge_admin_operations_refuse_non_admin_credentials_before_dispatch(met
     with sync_client(router, UDATA_CREDENTIAL) as client:
         if method_name == "add_reuse_badge":
             client.reuses.add_reuse_badge("reuse-1", "badger", ADMIN_PERMISSIONS, _policy(operation, "reuse-1"))
+            policy = _policy(operation, "reuse-1")
             with pytest.raises(ForbiddenError):
-                client.reuses.add_reuse_badge("reuse-1", "badger", PERMISSIONS, _policy(operation, "reuse-1"))
+                client.reuses.add_reuse_badge("reuse-1", "badger", PERMISSIONS, policy)
         else:
             client.reuses.delete_reuse_badge("reuse-1", "badger", ADMIN_PERMISSIONS, _policy(operation, "reuse-1"))
+            policy = _policy(operation, "reuse-1")
             with pytest.raises(ForbiddenError):
-                client.reuses.delete_reuse_badge("reuse-1", "badger", PERMISSIONS, _policy(operation, "reuse-1"))
+                client.reuses.delete_reuse_badge("reuse-1", "badger", PERMISSIONS, policy)
     badge_dispatches = [r for r in router.requests if "/badges" in r.url]
     assert len(badge_dispatches) == 1, "the admin tier dispatches once; the non-admin tier dispatches nothing"
     assert len([r for r in router.requests if "/reuses/" in r.url]) == 1
@@ -658,10 +663,9 @@ def test_reuse_mutation_failure_yields_redacted_receipt_with_exact_target() -> N
         with_site_route({("DELETE", f"{ORIGIN}/api/1/reuses/reuse-1/"): (404, {"message": "Not found"})})
     )
     with sync_client(router, UDATA_CREDENTIAL) as client:
+        policy = _policy(wire.DELETE_REUSE_OPERATION, "reuse-1")
         with pytest.raises(CatalogNotFoundError) as error:
-            client.reuses.delete_reuse(
-                "reuse-1", DELETE_ONLY_PERMISSIONS, _policy(wire.DELETE_REUSE_OPERATION, "reuse-1")
-            )
+            client.reuses.delete_reuse("reuse-1", DELETE_ONLY_PERMISSIONS, policy)
         receipt = error.value.__dict__["mutation_receipt"]
         assert receipt.target.value == "reuse-1"
         assert receipt.outcome == "failed"

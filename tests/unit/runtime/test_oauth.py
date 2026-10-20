@@ -199,8 +199,9 @@ def test_authorization_code_binds_one_exact_state_per_flow() -> None:
 
 
 def test_authorization_code_rejects_an_empty_bound_state() -> None:
+    flow = _flow()
     with pytest.raises(ValueError, match="non-empty string"):
-        AuthorizationCodeFlow(_flow(), state="")
+        AuthorizationCodeFlow(flow, state="")
 
 
 def test_mismatched_authorization_state_fails_before_dispatch() -> None:
@@ -217,8 +218,9 @@ def test_async_mismatched_authorization_state_fails_before_dispatch() -> None:
     transport = _AsyncTransport(_token_response())
     flow = AuthorizationCodeFlow(_flow(), transport)
 
+    operation = flow.exchange_async("authorization-code", state="attacker-state")
     with pytest.raises(CatalogValidationError, match="does not match"):
-        asyncio.run(flow.exchange_async("authorization-code", state="attacker-state"))
+        asyncio.run(operation)
 
     assert transport.requests == []
 
@@ -255,8 +257,9 @@ def test_transportless_authorization_code_flow_cannot_exchange() -> None:
     assert flow.authorization_url().startswith("https://auth.example.test/authorize?")
     with pytest.raises(TypeError, match="without a transport"):
         flow.exchange("authorization-code", state=flow.expected_state)
+    operation = flow.exchange_async("authorization-code", state=flow.expected_state)
     with pytest.raises(TypeError, match="without a transport"):
-        asyncio.run(flow.exchange_async("authorization-code", state=flow.expected_state))
+        asyncio.run(operation)
 
 
 def test_domain_rejects_non_https_token_endpoint() -> None:

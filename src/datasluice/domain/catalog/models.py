@@ -4,9 +4,12 @@ import math
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from itertools import islice
-from types import MappingProxyType
 from typing import ClassVar, cast
 
+from datasluice.domain._json import object_dict
+from datasluice.domain.artifact import _freeze_extensions as _artifact_freeze_extensions
+from datasluice.domain.artifact import _freeze_json as _artifact_freeze_json
+from datasluice.domain.artifact import _thaw_json
 from datasluice.domain.catalog.ids import CatalogId, CatalogPlatform, ResourceKind
 from datasluice.domain.catalog.redaction import (
     MAX_METADATA_DEPTH,
@@ -38,41 +41,11 @@ def _contract_error(path: str) -> DataSluiceError:
 
 
 def _object_dict(value: object, path: str) -> dict[str, object]:
-    if not isinstance(value, dict):
-        raise _contract_error(path)
-    result: dict[str, object] = {}
-    for key, nested in value.items():
-        if not isinstance(key, str):
-            raise _contract_error(path)
-        result[key] = nested
-    return result
+    return object_dict(value, path, _contract_error)
 
 
 def _freeze_json(value: object, path: str) -> object:
-    if value is None or isinstance(value, (str, bool)) or type(value) is int:
-        return value
-    if type(value) is float:
-        if math.isfinite(value):
-            return value
-        raise _contract_error(path)
-    if isinstance(value, Mapping):
-        frozen: dict[str, object] = {}
-        for key, nested in value.items():
-            if not isinstance(key, str):
-                raise _contract_error(path)
-            frozen[key] = _freeze_json(nested, f"{path}.{key}")
-        return MappingProxyType(frozen)
-    if isinstance(value, (list, tuple)):
-        return tuple(_freeze_json(nested, path) for nested in value)
-    raise _contract_error(path)
-
-
-def _thaw_json(value: object) -> object:
-    if isinstance(value, Mapping):
-        return {key: _thaw_json(nested) for key, nested in value.items()}
-    if isinstance(value, tuple):
-        return [_thaw_json(nested) for nested in value]
-    return value
+    return _artifact_freeze_json(value, path, error=_contract_error)
 
 
 def _redacted_record_value(value: object, *, _depth: int) -> object:
@@ -197,23 +170,7 @@ def _record_evidence(kind: str, value: object) -> dict[str, object]:
 
 
 def _freeze_extensions(value: object) -> Mapping[str, object]:
-    if not isinstance(value, Mapping):
-        raise _contract_error("extensions")
-    frozen: dict[str, object] = {}
-    for namespace, extension in value.items():
-        if not isinstance(namespace, str) or (
-            not namespace
-            or not namespace.isascii()
-            or not namespace[0].isalnum()
-            or not all(character.isalnum() or character in ".-" for character in namespace)
-            or not any(
-                character == "." and following.isalnum()
-                for character, following in zip(namespace, namespace[1:], strict=False)
-            )
-        ):
-            raise _contract_error("extensions")
-        frozen[namespace] = _freeze_json(extension, f"extensions.{namespace}")
-    return MappingProxyType(frozen)
+    return _artifact_freeze_extensions(value, error=_contract_error)
 
 
 def _strict_envelope(

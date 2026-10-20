@@ -77,24 +77,27 @@ def test_factory_accepts_canonical_context_and_validates_profile_identity() -> N
 
     assert isinstance(connector, CKANConnector)
 
+    context = _context(profile=_FOREIGN_PROFILE)
     with pytest.raises(ValueError, match="CKAN"):
-        create_ckan_connector(_context(profile=_FOREIGN_PROFILE))
+        create_ckan_connector(context)
 
 
 def test_factory_requires_both_typed_executor_modes() -> None:
     """A façade cannot silently fall back to an absent executor mode."""
     from datasluice.connectors.catalog.ckan import create_ckan_connector
 
+    context = context_missing_sync_executor(_PROFILE)
     with pytest.raises(ValueError, match="synchronous"):
-        create_ckan_connector(context_missing_sync_executor(_PROFILE))
+        create_ckan_connector(context)
 
 
 def test_factory_rejects_an_invalid_asynchronous_executor() -> None:
     """A façade cannot silently accept an invalid asynchronous executor."""
     from datasluice.connectors.catalog.ckan import create_ckan_connector
 
+    context = context_invalid_async_executor(_PROFILE)
     with pytest.raises(ValueError, match="asynchronous"):
-        create_ckan_connector(context_invalid_async_executor(_PROFILE))
+        create_ckan_connector(context)
 
 
 def test_connector_exposes_injected_normalized_native_services_and_effective_profile() -> None:

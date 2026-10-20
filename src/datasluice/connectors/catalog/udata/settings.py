@@ -5,8 +5,9 @@ from __future__ import annotations
 import math
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import urlunsplit
 
+from datasluice.connectors.catalog._settings import parse_origin
 from datasluice.domain.catalog.auth import CredentialResolver, UDataCredential
 from datasluice.domain.catalog.observability import TLSPolicy
 from datasluice.domain.catalog.resilience import TimeBudget
@@ -41,15 +42,7 @@ def normalize_origin(value: str) -> str:
         ValueError: If the URL is not a sanitized HTTP(S) origin, or an http
             origin targets a non-loopback host.
     """
-    if not isinstance(value, str) or not value:
-        raise ValueError("uData client settings require a non-empty base URL string.")
-    parsed = urlsplit(value)
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-        raise ValueError("uData base URLs must be absolute HTTP(S) origins.")
-    if parsed.username is not None or parsed.password is not None:
-        raise ValueError("uData base URLs cannot carry userinfo credentials.")
-    if parsed.query or parsed.fragment:
-        raise ValueError("uData base URLs cannot carry query strings or fragments.")
+    parsed = parse_origin(value, "uData")
     if parsed.path not in ("", "/"):
         raise ValueError("uData base URLs cannot carry a mount path; supply the scheme and host only.")
     if parsed.scheme == "http" and parsed.hostname not in LOOPBACK_HOSTS:

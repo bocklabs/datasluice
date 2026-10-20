@@ -4,11 +4,13 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from typing import ClassVar
 
 from datasluice.connectors.catalog.udata.models._segment import paging, path_segment
-from datasluice.domain.catalog.models import MappingRecord, _freeze_json, _thaw_json
+from datasluice.connectors.catalog.udata.models._shared import FollowerQuery, freeze_mapping
+from datasluice.domain.catalog.models import MappingRecord, _thaw_json
 from datasluice.domain.catalog.receipts import MutationReceipt
-from datasluice.exceptions import DataSluiceError
+from datasluice.domain.catalog.udata import _query_params
 from datasluice.runtime.transport.base import UploadPart
 
 _REUSE_FILTERS = ("dataset", "featured", "topic", "type", "tag", "organization", "organization_badge", "owner")
@@ -41,7 +43,7 @@ def _validated_reuse_filters(
     if unknown:
         raise ValueError(f"uData reuse {query} filters are not documented choices: {sorted(unknown)}.")
     for key, value in filters.items():
-        if not _is_filter_value(value):
+        if not is_filter_value(value):
             raise ValueError(
                 f"uData reuse {query} filter {key!r} must be a string, boolean, or tuple of non-empty strings."
             )
@@ -97,42 +99,18 @@ class ReuseListQuery:
             raise ValueError("uData reuse list q must be a string when supplied.")
         _validated_reuse_filters(self.filters, query="list")
         if self.filters is not None:
-            object.__setattr__(self, "filters", _frozen_mapping(self.filters, "reuse list filters"))
+            object.__setattr__(self, "filters", freeze_mapping(self.filters, "reuse list filters"))
 
     def query_params(self) -> list[tuple[str, str]]:
-        params: list[tuple[str, str]] = [("page", str(self.page)), ("page_size", str(self.page_size))]
-        if self.q is not None:
-            params.append(("q", self.q))
-        if self.sort is not None:
-            params.append(("sort", self.sort))
-        for key, value in sorted((self.filters or {}).items()):
-            if isinstance(value, bool):
-                params.append((key, "true" if value else "false"))
-            elif isinstance(value, tuple):
-                params.extend((key, item) for item in value)
-            else:
-                params.append((key, value))
-        return params
+        return _query_params(self.page, self.page_size, self.q, self.sort, self.filters)
 
 
 @dataclass(frozen=True, slots=True)
-class ReuseFollowersQuery:
+class ReuseFollowersQuery(FollowerQuery):
     """Stock follower query: pagination plus the optional user filter."""
 
-    page: int = 1
-    page_size: int = 20
-    user: str | None = None
-
-    def __post_init__(self) -> None:
-        paging(self.page, self.page_size, "uData reuse follower")
-        if self.user is not None and (not isinstance(self.user, str) or not self.user):
-            raise ValueError("uData reuse follower user must be a non-empty string when supplied.")
-
-    def query_params(self) -> list[tuple[str, str]]:
-        params = [("page", str(self.page)), ("page_size", str(self.page_size))]
-        if self.user is not None:
-            params.append(("user", self.user))
-        return params
+    _paging_label: ClassVar[str] = "uData reuse follower"
+    _user_subject: ClassVar[str] = "reuse"
 
 
 @dataclass(frozen=True, slots=True)
@@ -150,23 +128,13 @@ class ReuseSearchQuery:
             raise ValueError("uData reuse search q must be a string when supplied.")
         _validated_reuse_filters(self.filters, query="search")
         if self.filters is not None:
-            object.__setattr__(self, "filters", _frozen_mapping(self.filters, "reuse search filters"))
+            object.__setattr__(self, "filters", freeze_mapping(self.filters, "reuse search filters"))
 
     def query_params(self) -> list[tuple[str, str]]:
-        params: list[tuple[str, str]] = [("page", str(self.page)), ("page_size", str(self.page_size))]
-        if self.q is not None:
-            params.append(("q", self.q))
-        for key, value in sorted((self.filters or {}).items()):
-            if isinstance(value, bool):
-                params.append((key, "true" if value else "false"))
-            elif isinstance(value, tuple):
-                params.extend((key, item) for item in value)
-            else:
-                params.append((key, value))
-        return params
+        return _query_params(self.page, self.page_size, self.q, None, self.filters)
 
 
-def _is_filter_value(value: object) -> bool:
+def is_filter_value(value: object) -> bool:
     """Return whether one filter value is a string, a boolean, or a tuple of non-empty strings."""
     return isinstance(value, (str, bool)) or (
         type(value) is tuple and all(isinstance(item, str) and item for item in value)
@@ -187,17 +155,6 @@ def _validate_tags(value: object, *, required: bool = False) -> None:
         raise ValueError("uData reuse tags must be a tuple of non-empty strings when supplied.")
     if not all(isinstance(tag, str) and tag for tag in value):
         raise ValueError("uData reuse tags must be a tuple of non-empty strings when supplied.")
-
-
-def _frozen_mapping(value: Mapping[str, object], label: str) -> Mapping[str, object]:
-    """Return *value* deep-frozen, rejecting anything that is not JSON serializable."""
-    try:
-        frozen = _freeze_json(dict(value), f"udata.{label}")
-    except DataSluiceError as error:
-        raise ValueError(f"uData {label} must contain JSON-safe values only.") from error
-    if not isinstance(frozen, Mapping):
-        raise ValueError(f"uData {label} must be a mapping when supplied.")
-    return frozen
 
 
 def _validate_mapping(value: object, label: str) -> None:
@@ -228,12 +185,12 @@ class ReuseCreateInput:
         _validate_tags(self.tags, required=True)
         _validate_mapping(self.organization, "organization")
         if self.organization is not None:
-            object.__setattr__(self, "organization", _frozen_mapping(self.organization, "reuse organization"))
+            object.__setattr__(self, "organization", freeze_mapping(self.organization, "reuse organization"))
         if self.private is not None and type(self.private) is not bool:
             raise ValueError("uData reuse private flag must be a boolean when supplied.")
         _validate_mapping(self.extras, "extras")
         if self.extras is not None:
-            object.__setattr__(self, "extras", _frozen_mapping(self.extras, "reuse extras"))
+            object.__setattr__(self, "extras", freeze_mapping(self.extras, "reuse extras"))
 
     def payload(self) -> dict[str, object]:
         body: dict[str, object] = {
@@ -277,12 +234,12 @@ class ReuseUpdateInput:
         _validate_text(self.topic, "topic")
         _validate_mapping(self.organization, "organization")
         if self.organization is not None:
-            object.__setattr__(self, "organization", _frozen_mapping(self.organization, "reuse organization"))
+            object.__setattr__(self, "organization", freeze_mapping(self.organization, "reuse organization"))
         if self.private is not None and type(self.private) is not bool:
             raise ValueError("uData reuse private flag must be a boolean when supplied.")
         _validate_mapping(self.extras, "extras")
         if self.extras is not None:
-            object.__setattr__(self, "extras", _frozen_mapping(self.extras, "reuse extras"))
+            object.__setattr__(self, "extras", freeze_mapping(self.extras, "reuse extras"))
         if all(
             value is None
             for value in (

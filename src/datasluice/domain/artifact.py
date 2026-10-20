@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 import re
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from types import MappingProxyType
@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, cast
 from urllib.parse import urlsplit
 
 from datasluice._uri import sanitize_uri
+from datasluice.domain._json import object_dict
 from datasluice.exceptions import DataSluiceError
 
 if TYPE_CHECKING:
@@ -47,14 +48,7 @@ def _is_sha256(value: object) -> bool:
 
 
 def _object_dict(value: object, path: str) -> dict[str, object]:
-    if not isinstance(value, dict):
-        raise _contract_error(path)
-    result: dict[str, object] = {}
-    for key, nested in value.items():
-        if not isinstance(key, str):
-            raise _contract_error(path)
-        result[key] = nested
-    return result
+    return object_dict(value, path, _contract_error)
 
 
 def _public_uri(value: object, path: str) -> str:
@@ -69,7 +63,9 @@ def _public_uri(value: object, path: str) -> str:
     return value
 
 
-def _freeze_json(value: object, path: str = "value") -> object:
+def _freeze_json(
+    value: object, path: str = "value", *, error: Callable[[str], DataSluiceError] = _contract_error
+) -> object:
     if value is None or isinstance(value, (str, bool)):
         return value
     if type(value) is int:
@@ -77,20 +73,22 @@ def _freeze_json(value: object, path: str = "value") -> object:
     if type(value) is float:
         if math.isfinite(value):
             return value
-        raise _contract_error(path)
+        raise error(path)
     if isinstance(value, Mapping):
-        return _freeze_json_object(value, path)
+        return _freeze_json_object(value, path, error=error)
     if isinstance(value, (list, tuple)):
-        return tuple(_freeze_json(nested, path) for nested in value)
-    raise _contract_error(path)
+        return tuple(_freeze_json(nested, path, error=error) for nested in value)
+    raise error(path)
 
 
-def _freeze_json_object(value: Mapping[object, object], path: str) -> Mapping[str, object]:
+def _freeze_json_object(
+    value: Mapping[object, object], path: str, *, error: Callable[[str], DataSluiceError] = _contract_error
+) -> Mapping[str, object]:
     frozen: dict[str, object] = {}
     for key, nested in value.items():
         if not isinstance(key, str):
-            raise _contract_error(path)
-        frozen[key] = _freeze_json(nested, f"{path}.{key}")
+            raise error(path)
+        frozen[key] = _freeze_json(nested, f"{path}.{key}", error=error)
     return MappingProxyType(frozen)
 
 
@@ -102,13 +100,15 @@ def _thaw_json(value: object) -> object:
     return value
 
 
-def _freeze_extensions(value: object) -> Mapping[str, object]:
+def _freeze_extensions(
+    value: object, *, error: Callable[[str], DataSluiceError] = _contract_error
+) -> Mapping[str, object]:
     if not isinstance(value, Mapping):
-        raise _contract_error("extensions")
+        raise error("extensions")
     frozen: dict[str, object] = {}
     for namespace, extension in value.items():
         if not isinstance(namespace, str):
-            raise _contract_error("extensions")
+            raise error("extensions")
         if (
             not namespace
             or not namespace.isascii()
@@ -119,8 +119,8 @@ def _freeze_extensions(value: object) -> Mapping[str, object]:
                 for character, following in zip(namespace, namespace[1:], strict=False)
             )
         ):
-            raise _contract_error("extensions")
-        frozen[namespace] = _freeze_json(extension, f"extensions.{namespace}")
+            raise error("extensions")
+        frozen[namespace] = _freeze_json(extension, f"extensions.{namespace}", error=error)
     return MappingProxyType(frozen)
 
 

@@ -278,8 +278,10 @@ def test_destructive_delete_requires_exact_confirmation_without_dispatch() -> No
     client = SyncUDataClient(
         transport, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL, owns_transport=False
     )
-    with client, pytest.raises(ForbiddenError):
-        client.organizations_memberships.delete_organization("org-1", PERMISSIONS, MutationPolicy(destructive=True))
+    with client:
+        policy = MutationPolicy(destructive=True)
+        with pytest.raises(ForbiddenError):
+            client.organizations_memberships.delete_organization("org-1", PERMISSIONS, policy)
 
 
 def test_organization_inputs_reject_invalid_roles_and_ambiguous_invitations() -> None:
@@ -301,13 +303,15 @@ def test_organization_inputs_reject_invalid_roles_and_ambiguous_invitations() ->
 
 @pytest.mark.parametrize("value", [None, 1, 1.5, {"nested": True}, ["a"]])
 def test_organization_filters_reject_values_outside_the_declared_union(value: object) -> None:
+    filters = cast("Mapping[str, str | bool | tuple[str, ...]]", {"status": value})
     with pytest.raises(ValueError, match="filter"):
-        OrganizationListQuery(filters=cast("Mapping[str, str | bool | tuple[str, ...]]", {"status": value}))
+        OrganizationListQuery(filters=filters)
 
 
 def test_organization_filters_reject_a_non_mapping_container() -> None:
+    filters = cast("Mapping[str, str | bool | tuple[str, ...]]", [("status", "validated")])
     with pytest.raises(ValueError, match="mapping"):
-        OrganizationListQuery(filters=cast("Mapping[str, str | bool | tuple[str, ...]]", [("status", "validated")]))
+        OrganizationListQuery(filters=filters)
 
 
 def test_organization_filters_accept_the_declared_union() -> None:
@@ -398,10 +402,10 @@ def test_badges_require_admin_evidence_before_dispatch_in_both_modes() -> None:
     permissions = EffectivePermissions.for_credential(CREDENTIAL, platform=CatalogPlatform.UDATA, roles=frozenset())
     sync_transport = _Router(_routes({}))
     sync = SyncUDataClient(sync_transport, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL)
-    with sync, pytest.raises(ForbiddenError):
-        sync.organizations_memberships.add_organization_badge(
-            "org-1", "certified", permissions, _policy(wire.ADD_ORGANIZATION_BADGE_OPERATION, "org-1/certified")
-        )
+    with sync:
+        policy = _policy(wire.ADD_ORGANIZATION_BADGE_OPERATION, "org-1/certified")
+        with pytest.raises(ForbiddenError):
+            sync.organizations_memberships.add_organization_badge("org-1", "certified", permissions, policy)
     assert not sync_transport.requests
 
     async_transport = _AsyncRouter(_routes({}))
@@ -409,12 +413,10 @@ def test_badges_require_admin_evidence_before_dispatch_in_both_modes() -> None:
 
     async def run() -> None:
         async with async_client:
+            policy = _policy(wire.ADD_ORGANIZATION_BADGE_OPERATION, "org-1/certified")
             with pytest.raises(ForbiddenError):
                 await async_client.organizations_memberships.add_organization_badge(
-                    "org-1",
-                    "certified",
-                    permissions,
-                    _policy(wire.ADD_ORGANIZATION_BADGE_OPERATION, "org-1/certified"),
+                    "org-1", "certified", permissions, policy
                 )
 
     asyncio.run(run())
@@ -424,14 +426,11 @@ def test_badges_require_admin_evidence_before_dispatch_in_both_modes() -> None:
 def test_refusal_route_rejection_keeps_a_composite_receipt_target() -> None:
     transport = _Router(_routes({}))
     client = SyncUDataClient(transport, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL)
-    with client, pytest.raises(CatalogValidationError) as raised:
-        client.organizations_memberships.refuse_membership(
-            "org/invalid",
-            "request-1",
-            OrganizationRefusalInput("No"),
-            PERMISSIONS,
-            _policy(wire.REFUSE_MEMBERSHIP_OPERATION, "org/invalid/request-1"),
-        )
+    with client:
+        body = OrganizationRefusalInput("No")
+        policy = _policy(wire.REFUSE_MEMBERSHIP_OPERATION, "org/invalid/request-1")
+        with pytest.raises(CatalogValidationError) as raised:
+            client.organizations_memberships.refuse_membership("org/invalid", "request-1", body, PERMISSIONS, policy)
     receipt = raised.value.__dict__["mutation_receipt"]
     assert receipt.outcome == "rejected"
     assert receipt.target.value == "org/invalid/request-1"
@@ -451,13 +450,11 @@ def test_logo_close_failure_preserves_the_success_receipt() -> None:
     path = f"{ORIGIN}/api/1/organizations/org-1/logo/"
     transport = _Router(_routes({("POST", path): {"id": "logo"}}))
     client = SyncUDataClient(transport, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL)
-    with client, pytest.raises(OSError) as raised:
-        client.organizations_memberships.organization_logo(
-            "org-1",
-            ResourceUploadInput(CloseFailingSource(b"logo"), "logo.png", 4),
-            PERMISSIONS,
-            _policy(wire.ORGANIZATION_LOGO_OPERATION, "org-1"),
-        )
+    with client:
+        upload = ResourceUploadInput(CloseFailingSource(b"logo"), "logo.png", 4)
+        policy = _policy(wire.ORGANIZATION_LOGO_OPERATION, "org-1")
+        with pytest.raises(OSError) as raised:
+            client.organizations_memberships.organization_logo("org-1", upload, PERMISSIONS, policy)
     assert raised.value.__dict__["mutation_receipt"].outcome == "succeeded"
 
 
@@ -641,8 +638,9 @@ def test_organization_mutation_value_carries_redacted_payload() -> None:
 def test_organization_identifiers_reject_quote_and_control_characters() -> None:
     """Organization ids must satisfy the same segment policy as the sibling uData families."""
     for identifier in ('a"b', "a'b", "a\nb", "a/b", ".", "..", "", 4):
+        typed_identifier = cast("str", identifier)
         with pytest.raises(CatalogValidationError):
-            wire.get_organization_request(cast("str", identifier))
+            wire.get_organization_request(typed_identifier)
 
 
 def _redirect_call(location: str):
@@ -744,5 +742,6 @@ def test_organization_badge_delete_requotes_the_validated_kind() -> None:
 
 
 def test_organization_owned_reuses_route_refuses_a_query() -> None:
+    query = OrganizationListQuery()
     with pytest.raises(CatalogValidationError, match="does not accept query parameters"):
-        wire.organization_owned_request("org-1", "reuses", OrganizationListQuery())
+        wire.organization_owned_request("org-1", "reuses", query)

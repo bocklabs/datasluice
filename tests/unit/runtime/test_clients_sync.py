@@ -35,21 +35,7 @@ from datasluice.errors.catalog import (
 from datasluice.runtime.clients import SyncCatalogClient, _credential_scope
 from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse, TransportError
 from datasluice.runtime.transport.user_agent import build_user_agent
-from tests.unit.runtime._fixtures import _envelope, _guard, _profile, _request
-
-
-class _Transport:
-    def __init__(self, response: RuntimeResponse) -> None:
-        self.response = response
-        self.requests: list[RuntimeRequest] = []
-        self.close_count = 0
-
-    def send(self, request: RuntimeRequest) -> RuntimeResponse:
-        self.requests.append(request)
-        return self.response
-
-    def close(self) -> None:
-        self.close_count += 1
+from tests.unit.runtime._fixtures import _envelope, _guard, _profile, _request, _Transport
 
 
 class _FailingTransport:
@@ -360,8 +346,9 @@ def test_mutation_idempotency_key_is_sent_on_each_retry() -> None:
     )
     client = SyncCatalogClient(transport, _profile(), retry_sleep=lambda _: None)
 
+    guard = _guard()
     with pytest.raises(TransportError):
-        client.datasets.get(request, _guard())
+        client.datasets.get(request, guard)
 
     assert len(transport.requests) == 3
     assert all(item.headers["Idempotency-Key"] == "fixture-idempotency-key" for item in transport.requests)

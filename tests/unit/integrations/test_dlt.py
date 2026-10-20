@@ -166,8 +166,9 @@ def test_source_rejects_the_native_only_udata_client() -> None:
     )
 
     assert isinstance(client, SyncUDataServices)
+    query = _query()
     with pytest.raises(TypeError, match="SyncCatalogClient"):
-        datasluice_source(client, _query())
+        datasluice_source(client, query)
 
 
 def test_source_requires_a_client_exposing_the_public_transport_accessor() -> None:

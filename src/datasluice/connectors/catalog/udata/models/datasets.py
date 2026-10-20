@@ -10,6 +10,7 @@ from datasluice.connectors.catalog.udata.models._segment import paging
 from datasluice.connectors.catalog.udata.models.reuses import ReuseFollowersQuery
 from datasluice.domain.catalog.models import _freeze_json, _thaw_json
 from datasluice.domain.catalog.receipts import MutationReceipt
+from datasluice.domain.catalog.udata import _query_params
 from datasluice.exceptions import DataSluiceError
 
 if TYPE_CHECKING:
@@ -134,19 +135,15 @@ class DatasetListQuery:
 
     def query_params(self) -> list[tuple[str, str]]:
         """Encode the query into exact stock query-string parameter pairs."""
-        params: list[tuple[str, str]] = [("page", str(self.page)), ("page_size", str(self.page_size))]
-        if self.q is not None:
-            params.append(("q", self.q))
-        if self.sort is not None:
-            params.append(("sort", self.sort))
-        for key, value in sorted((self.filters or {}).items()):
-            if isinstance(value, bool):
-                params.append((key, "true" if value else "false"))
-            elif isinstance(value, tuple):
-                params.extend((key, _required_text(item, key)) for item in value)
-            else:
-                params.append((key, _required_text(value, key)))
-        return params
+        return _query_params(
+            self.page,
+            self.page_size,
+            self.q,
+            self.sort,
+            self.filters,
+            encode=_required_text,
+            encode_repeated=_required_text,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -284,11 +281,6 @@ class DatasetExtrasUpdate:
         """Encode the exact extras JSON body."""
         return {key: _thaw_json(value) for key, value in self.values.items()}
 
-    @property
-    def removal_keys(self) -> list[str]:
-        """Return the keys whose JSON null values delete the extra."""
-        return [key for key, value in self.values.items() if value is None]
-
 
 @dataclass(frozen=True, slots=True)
 class DatasetExtrasDelete:
@@ -361,19 +353,15 @@ class DatasetSearchQuery:
 
     def query_params(self) -> list[tuple[str, str]]:
         """Encode the exact v2 search query-string parameter pairs."""
-        params: list[tuple[str, str]] = [("page", str(self.page)), ("page_size", str(self.page_size))]
-        if self.q is not None:
-            params.append(("q", self.q))
-        if self.sort is not None:
-            params.append(("sort", self.sort))
-        for key, value in sorted((self.filters or {}).items()):
-            if isinstance(value, bool):
-                params.append((key, "true" if value else "false"))
-            elif isinstance(value, tuple):
-                params.extend((key, _required_text(item, key)) for item in value)
-            else:
-                params.append((key, _required_text(value, key)))
-        return params
+        return _query_params(
+            self.page,
+            self.page_size,
+            self.q,
+            self.sort,
+            self.filters,
+            encode=_required_text,
+            encode_repeated=_required_text,
+        )
 
 
 @dataclass(frozen=True, slots=True)

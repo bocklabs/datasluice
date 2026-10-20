@@ -71,24 +71,22 @@ def _confirmed(operation: str, target: str, *, destructive: bool = True) -> Muta
 def test_public_origin_refuses_a_confirmed_destructive_oauth_revocation() -> None:
     router = _Router()
     client = SyncUDataClient(router, declared_udata_profile(), origin=PUBLIC, credentials=CREDENTIAL)
-    with client, pytest.raises(CatalogError, match="controlled local deployment"):
-        client.auth_oauth.revoke_token(
-            OAuthRevokeRequest(token="opaque-access-token"),
-            PERMISSIONS,
-            _confirmed(oauth_wire.OPERATIONS["revoke_token"], "request:revoke_token"),
-        )
+    with client:
+        body = OAuthRevokeRequest(token="opaque-access-token")
+        policy = _confirmed(oauth_wire.OPERATIONS["revoke_token"], "request:revoke_token")
+        with pytest.raises(CatalogError, match="controlled local deployment"):
+            client.auth_oauth.revoke_token(body, PERMISSIONS, policy)
     assert all(request.url.endswith("/api/1/site/") for request in router.requests)
 
 
 def test_public_origin_refuses_api_token_creation() -> None:
     router = _Router()
     client = SyncUDataClient(router, declared_udata_profile(), origin=PUBLIC, credentials=CREDENTIAL)
-    with client, pytest.raises(CatalogError, match="controlled local deployment"):
-        client.users_tokens.create_api_token(
-            ApiTokenCreateInput(name="evidence"),
-            PERMISSIONS,
-            _confirmed(users_wire.OPERATIONS["create_api_token"], "new-api-token", destructive=False),
-        )
+    with client:
+        body = ApiTokenCreateInput(name="evidence")
+        policy = _confirmed(users_wire.OPERATIONS["create_api_token"], "new-api-token", destructive=False)
+        with pytest.raises(CatalogError, match="controlled local deployment"):
+            client.users_tokens.create_api_token(body, PERMISSIONS, policy)
     assert all(request.url.endswith("/api/1/site/") for request in router.requests)
 
 
@@ -103,8 +101,9 @@ def test_async_public_origin_refuses_the_same_revocation() -> None:
                 _confirmed(oauth_wire.OPERATIONS["revoke_token"], "request:revoke_token"),
             )
 
+    coroutine = run()
     with pytest.raises(CatalogError, match="controlled local deployment"):
-        asyncio.run(run())
+        asyncio.run(coroutine)
     assert all(request.url.endswith("/api/1/site/") for request in router.requests)
 
 

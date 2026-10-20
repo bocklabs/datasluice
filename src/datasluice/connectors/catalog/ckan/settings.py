@@ -6,9 +6,10 @@ import math
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Literal
-from urllib.parse import unquote, urlsplit, urlunsplit
+from urllib.parse import unquote, urlunsplit
 
 from datasluice._uri import validate_http_target
+from datasluice.connectors.catalog._settings import parse_origin
 from datasluice.connectors.catalog.ckan.rate_limits import PortalRatePolicy
 from datasluice.domain.catalog.auth import CKANCredential, CredentialResolver
 from datasluice.domain.catalog.observability import TLSPolicy
@@ -43,15 +44,7 @@ def normalize_origin(value: str) -> str:
             HTTP(S) host is targeted, or plain-text HTTP targets a host outside
             ``LOOPBACK_HOSTS``.
     """
-    if not isinstance(value, str) or not value:
-        raise ValueError("CKAN client settings require a non-empty base URL string.")
-    parsed = urlsplit(value)
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-        raise ValueError("CKAN base URLs must be absolute HTTP(S) origins.")
-    if parsed.username is not None or parsed.password is not None:
-        raise ValueError("CKAN base URLs cannot carry userinfo credentials.")
-    if parsed.query or parsed.fragment:
-        raise ValueError("CKAN base URLs cannot carry query strings or fragments.")
+    parsed = parse_origin(value, "CKAN")
     if parsed.scheme == "http" and parsed.hostname not in LOOPBACK_HOSTS:
         raise ValueError("Plain-text HTTP origins are restricted to loopback CKAN deployments.")
     try:
@@ -162,14 +155,3 @@ class CKANClientSettings:
             raise ValueError("Capability cache TTL must be a finite non-negative number.")
         if self.max_upload_bytes is not None and (type(self.max_upload_bytes) is not int or self.max_upload_bytes < 1):
             raise ValueError("Upload byte ceilings must be positive integers when supplied.")
-
-    @property
-    def owns_sync_transport(self) -> bool:
-        """Return whether factory-constructed sync transports are client-owned."""
-        return self.sync_transport is None or _transport_role(self.sync_transport) == "factory"
-
-    @property
-    def owns_async_transport(self) -> bool:
-        """Return whether factory-constructed async transports are client-owned."""
-        role = _transport_role(self.async_transport) if self.async_transport is not None else "none"
-        return self.async_transport is None or role == "factory"

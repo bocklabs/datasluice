@@ -648,5 +648,6 @@ def test_artifact_safety_requires_a_candidate_wheel(clean_gate_tree: Path) -> No
 
 def test_artifact_safety_rejects_symbolic_links(clean_gate_tree: Path) -> None:
     (gate.REVIEWS_ROOT / "external").symlink_to(clean_gate_tree / "outside")
+    wheel = _wheel(clean_gate_tree)
     with pytest.raises(gate.GateError, match="symbolic link"):
-        gate.require_artifact_safety(_wheel(clean_gate_tree))
+        gate.require_artifact_safety(wheel)

@@ -207,15 +207,15 @@ def test_spatial_queries_reject_invalid_input_before_dispatch() -> None:
 def test_spatial_sizes_are_rejected_above_the_ceiling_before_dispatch(oversized: int) -> None:
     """An arbitrarily large size is refused at construction, so no request can ever carry it."""
     router = sync_route_table(with_site_route({}))
-    with sync_client(router, UDATA_CREDENTIAL) as client:
+    with sync_client(router, UDATA_CREDENTIAL):
         with pytest.raises(ValueError, match="1 through 100"):
             SpatialSuggestQuery(q="ab", size=oversized)
         with pytest.raises(ValueError, match="1 through 100"):
             SpatialDatasetQuery(size=oversized)
         with pytest.raises(ValueError, match="1 through 100"):
-            client.spatial.suggest_zones(SpatialSuggestQuery(q="ab", size=oversized))
+            SpatialSuggestQuery(q="ab", size=oversized)
         with pytest.raises(ValueError, match="1 through 100"):
-            client.spatial.spatial_zone_datasets("fr:1100001", SpatialDatasetQuery(size=oversized))
+            SpatialDatasetQuery(size=oversized)
     assert [r.url for r in router.requests if "/spatial/" in r.url] == []
 
 

@@ -233,12 +233,14 @@ def test_create_and_update_bodies_carry_only_the_documented_fields() -> None:
 
 def test_mutually_exclusive_schedules_are_refused_at_construction() -> None:
     """The pinned POST refuses both schedules at once and neither is invented."""
+    crontab = CrontabSchedule()
+    interval = IntervalSchedule(every=1, period="days")
     with pytest.raises(ValueError, match="exactly one"):
         JobScheduleInput(
             name="j",
             task="t",
-            crontab=CrontabSchedule(),
-            interval=IntervalSchedule(every=1, period="days"),
+            crontab=crontab,
+            interval=interval,
         )
     with pytest.raises(ValueError, match="exactly one"):
         JobScheduleInput(name="j", task="t")
@@ -326,8 +328,10 @@ def test_anonymous_family_access_fails_closed_before_dispatch() -> None:
 def test_a_destructive_delete_requires_a_confirmed_destructive_policy() -> None:
     """A delete without the destructive flag is refused before dispatch."""
     router = sync_route_table(_routes())
-    with sync_client(router, UDATA_CREDENTIAL) as client, pytest.raises(ForbiddenError) as raised:
-        client.worker_jobs.delete_job("wheel-job", ADMIN, mutation_policy(wire.DELETE_JOB_OPERATION, "wheel-job"))
+    with sync_client(router, UDATA_CREDENTIAL) as client:
+        policy = mutation_policy(wire.DELETE_JOB_OPERATION, "wheel-job")
+        with pytest.raises(ForbiddenError) as raised:
+            client.worker_jobs.delete_job("wheel-job", ADMIN, policy)
     assert _receipt_from(raised.value).outcome == "rejected"
     assert [request for request in router.requests if request.method == "DELETE"] == []
 
@@ -335,10 +339,10 @@ def test_a_destructive_delete_requires_a_confirmed_destructive_policy() -> None:
 def test_a_confirmation_bound_to_another_target_is_refused_before_dispatch() -> None:
     """The confirmation must name this operation and this exact target."""
     router = sync_route_table(_routes())
-    with sync_client(router, UDATA_CREDENTIAL) as client, pytest.raises(ForbiddenError) as raised:
-        client.worker_jobs.delete_job(
-            "wheel-job", ADMIN, mutation_policy(wire.DELETE_JOB_OPERATION, "other-job", destructive=True)
-        )
+    with sync_client(router, UDATA_CREDENTIAL) as client:
+        policy = mutation_policy(wire.DELETE_JOB_OPERATION, "other-job", destructive=True)
+        with pytest.raises(ForbiddenError) as raised:
+            client.worker_jobs.delete_job("wheel-job", ADMIN, policy)
     assert _receipt_from(raised.value).outcome == "rejected"
     assert [request for request in router.requests if request.method == "DELETE"] == []
 
@@ -374,10 +378,10 @@ def test_status_failures_decode_into_the_documented_error_shape(
 def test_delete_failures_keep_the_exact_target_and_a_redacted_receipt() -> None:
     """A refused delete stays visible against its exact target with no credential echo."""
     router = sync_route_table(with_site_route({("DELETE", f"{ORIGIN}{JOBS}wheel-job/"): (403, {"message": "Denied"})}))
-    with sync_client(router, UDATA_CREDENTIAL) as client, pytest.raises(ForbiddenError) as raised:
-        client.worker_jobs.delete_job(
-            "wheel-job", ADMIN, mutation_policy(wire.DELETE_JOB_OPERATION, "wheel-job", destructive=True)
-        )
+    with sync_client(router, UDATA_CREDENTIAL) as client:
+        policy = mutation_policy(wire.DELETE_JOB_OPERATION, "wheel-job", destructive=True)
+        with pytest.raises(ForbiddenError) as raised:
+            client.worker_jobs.delete_job("wheel-job", ADMIN, policy)
     receipt = _receipt_from(raised.value)
     assert receipt.outcome == "failed"
     assert receipt.target.value == "wheel-job"

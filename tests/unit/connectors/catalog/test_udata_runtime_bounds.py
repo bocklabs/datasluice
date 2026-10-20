@@ -55,8 +55,9 @@ def test_visualization_image_rejects_oversize_before_copy() -> None:
         def __bytes__(self) -> bytes:
             raise AssertionError("Oversize input must not be copied.")
 
+    image = cast("bytes", NoCopy(1_048_577))
     with pytest.raises(ValueError, match="byte limit"):
-        VisualizationImageInput(cast("bytes", NoCopy(1_048_577)), "image/png")
+        VisualizationImageInput(image, "image/png")
 
 
 def test_visualization_image_freezes_mutable_input_and_accepts_exact_limit() -> None:

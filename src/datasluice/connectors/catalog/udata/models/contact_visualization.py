@@ -7,8 +7,8 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from datasluice.connectors.catalog.udata.models._segment import paging, path_segment
-from datasluice.domain.catalog.models import MappingRecord, _freeze_json, _thaw_json
-from datasluice.exceptions import DataSluiceError
+from datasluice.connectors.catalog.udata.models._shared import freeze_mapping
+from datasluice.domain.catalog.models import MappingRecord, _thaw_json
 
 if TYPE_CHECKING:
     from datasluice.domain.catalog.receipts import MutationReceipt
@@ -132,24 +132,13 @@ def _choice(value: object, choices: tuple[str, ...], label: str) -> None:
         raise ValueError(f"uData {label} is not a documented choice.")
 
 
-def _frozen_mapping(value: Mapping[str, object], label: str) -> Mapping[str, object]:
-    """Return *value* deep-frozen, rejecting anything that is not JSON serializable."""
-    try:
-        frozen = _freeze_json(dict(value), f"udata.{label}")
-    except DataSluiceError as error:
-        raise ValueError(f"uData {label} must contain JSON-safe values only.") from error
-    if not isinstance(frozen, Mapping):
-        raise ValueError(f"uData {label} must be a mapping when supplied.")
-    return frozen
-
-
 def _frozen_mappings(value: object, label: str) -> tuple[Mapping[str, object], ...]:
     """Return *value* as a tuple of deep-frozen JSON mappings."""
     if value is None:
         return ()
     if not isinstance(value, tuple) or not all(isinstance(item, Mapping) for item in value):
         raise ValueError(f"uData {label} must be a tuple of mappings when supplied.")
-    return tuple(_frozen_mapping(item, label) for item in value)
+    return tuple(freeze_mapping(item, label) for item in value)
 
 
 def _validate_x_axis(axis: Mapping[str, object]) -> None:
@@ -218,7 +207,7 @@ def _validated_axis(value: object, label: str, *, required: bool = False) -> Map
         _validate_x_axis(value)
     else:
         _validate_y_axis(value)
-    return _frozen_mapping(value, f"visualization {label}")
+    return freeze_mapping(value, f"visualization {label}")
 
 
 def _validated_series(value: object, label: str, *, required: bool = False) -> tuple[Mapping[str, object], ...]:
@@ -375,7 +364,7 @@ class VisualizationCreateInput:
         if self.extras is not None:
             if not isinstance(self.extras, Mapping):
                 raise ValueError("uData visualization extras must be a mapping when supplied.")
-            object.__setattr__(self, "extras", _frozen_mapping(self.extras, "visualization extras"))
+            object.__setattr__(self, "extras", freeze_mapping(self.extras, "visualization extras"))
         if self.owner is not None:
             linked_identifier(self.owner, "udata/api-v1.create-visualization", "uData visualization owner")
         if self.organization is not None:
@@ -440,7 +429,7 @@ class VisualizationUpdateInput:
         if self.extras is not None:
             if not isinstance(self.extras, Mapping):
                 raise ValueError("uData visualization extras must be a mapping when supplied.")
-            object.__setattr__(self, "extras", _frozen_mapping(self.extras, "visualization extras"))
+            object.__setattr__(self, "extras", freeze_mapping(self.extras, "visualization extras"))
 
     def payload(self) -> dict[str, object]:
         """Encode the exact update JSON body with omission semantics."""

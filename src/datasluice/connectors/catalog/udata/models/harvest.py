@@ -10,12 +10,13 @@ from typing import TYPE_CHECKING
 
 from datasluice._uri import validate_http_target
 from datasluice.connectors.catalog.udata.models._cron import CRON_FIELD, MAX_CRON_FIELD
+from datasluice.connectors.catalog.udata.models._jobs import _validate_lease, _validate_wait_result
 from datasluice.connectors.catalog.udata.models._segment import paging, path_segment
-from datasluice.domain.catalog.models import MappingRecord, _freeze_json, _thaw_json
+from datasluice.connectors.catalog.udata.models._shared import freeze_mapping
+from datasluice.domain.catalog.models import MappingRecord, _thaw_json
 from datasluice.domain.catalog.receipts import MutationReceipt
 from datasluice.domain.catalog.resilience import TimeBudget
 from datasluice.errors.catalog import CatalogValidationError
-from datasluice.exceptions import DataSluiceError
 from datasluice.runtime.bulk import BulkItemReceipt, BulkPlan, BulkSummary
 
 if TYPE_CHECKING:
@@ -38,8 +39,6 @@ HARVEST_DESTRUCTIVE_BULK_ACTIONS = frozenset({"delete-source", "unschedule-sourc
 _ABSOLUTE_URL = re.compile(r"^[A-Za-z][A-Za-z0-9+.\-]*://")
 _MAX_PAGE = 100_000
 _MAX_BULK_TARGETS = 64
-_MAX_POLLS = 1024
-_MAX_POLL_INTERVAL = 300.0
 _MAX_TEXT = 255
 
 
@@ -93,16 +92,6 @@ def _validated_endpoint_tree(value: object, *, allow_private: bool) -> None:
     elif isinstance(value, (list, tuple)):
         for nested in value:
             _validated_endpoint_tree(nested, allow_private=allow_private)
-
-
-def _frozen_mapping(value: Mapping[str, object], label: str) -> Mapping[str, object]:
-    try:
-        frozen = _freeze_json(dict(value), f"udata.{label}")
-    except DataSluiceError as error:
-        raise ValueError(f"uData {label} must contain JSON-safe values only.") from error
-    if not isinstance(frozen, Mapping):
-        raise ValueError(f"uData {label} must be a mapping when supplied.")
-    return frozen
 
 
 def _validate_text(value: object, label: str, *, required: bool = False) -> str | None:
@@ -191,7 +180,7 @@ class HarvestSourceInput:
         if self.config is not None:
             if not isinstance(self.config, Mapping):
                 raise ValueError("uData harvest config must be a mapping when supplied.")
-            frozen = _frozen_mapping(self.config, "harvest source config")
+            frozen = freeze_mapping(self.config, "harvest source config")
             _validated_endpoint_tree(frozen, allow_private=self.allow_private_endpoint)
             object.__setattr__(self, "config", frozen)
 
@@ -410,17 +399,10 @@ class UDataJobHandle:
             raise ValueError("uData job handle job identifiers must be a non-empty string when supplied.")
         if not isinstance(self.status, str) or self.status not in HARVEST_JOB_STATUSES:
             raise ValueError(f"uData job handle status must be one of {sorted(HARVEST_JOB_STATUSES)}.")
-        if not isinstance(self.budget, TimeBudget):
-            raise ValueError("uData job handle wait budgets must use TimeBudget.")
-        if type(self.poll_interval) not in (int, float) or not 0 <= float(self.poll_interval) <= _MAX_POLL_INTERVAL:
-            raise ValueError(f"uData job handle poll intervals must be between 0 and {_MAX_POLL_INTERVAL} seconds.")
-        object.__setattr__(self, "poll_interval", float(self.poll_interval))
-        if type(self.max_polls) is not int or not 1 <= self.max_polls <= _MAX_POLLS:
-            raise ValueError(f"uData job handle poll ceilings must be an integer from 1 through {_MAX_POLLS}.")
-        if type(self.polls) is not int or self.polls < 0:
-            raise ValueError("uData job handle poll counts must be a non-negative integer.")
-        if not all(type(state) is bool for state in (self.exhausted, self.abandoned)):
-            raise ValueError("uData job handle lease state must use booleans.")
+        interval = _validate_lease(
+            self.budget, self.poll_interval, self.max_polls, self.polls, self.exhausted, self.abandoned
+        )
+        object.__setattr__(self, "poll_interval", interval)
 
     @property
     def terminal(self) -> bool:
@@ -492,10 +474,7 @@ class HarvestJobWaitResult:
     record: MappingRecord | None = None
 
     def __post_init__(self) -> None:
-        if not isinstance(self.handle, UDataJobHandle):
-            raise ValueError("uData job wait results require a typed job handle.")
-        if self.record is not None and not isinstance(self.record, MappingRecord):
-            raise ValueError("uData job wait result records require a mapping record.")
+        _validate_wait_result(self.handle, self.record, UDataJobHandle)
 
     def to_dict(self) -> dict[str, object]:
         """Return the wait outcome as a JSON-safe projection."""

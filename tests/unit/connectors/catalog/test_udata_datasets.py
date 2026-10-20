@@ -1058,8 +1058,10 @@ def test_v2_search_rejects_non_object_facets() -> None:
         {("GET", "http://127.0.0.1:5640/api/2/datasets/search/?page=1&page_size=20"): json.dumps(payload).encode()}
     )
 
-    with _sync_client(routes) as client, pytest.raises(CatalogValidationError, match="facets.*JSON object"):
-        client.datasets.search_v2(DatasetSearchQuery())
+    with _sync_client(routes) as client:
+        query = DatasetSearchQuery()
+        with pytest.raises(CatalogValidationError, match="facets.*JSON object"):
+            client.datasets.search_v2(query)
 
 
 def test_wr08_v2_search_rejects_undocumented_filters_and_ranges() -> None:
@@ -1537,12 +1539,10 @@ def test_dataset_list_rejects_oversized_responses_before_decoding() -> None:
 def test_v1_delete_decodes_the_response_body_through_the_typed_extras_boundary() -> None:
     routes = _site_first({("DELETE", "http://127.0.0.1:5640/api/1/datasets/abc/"): (200, ["not", "an", "object"])})
     transport, client = _sync_client_with_transport(routes, _USER_CREDENTIAL)
-    with client, pytest.raises(CatalogValidationError) as error:
-        client.datasets.delete(
-            "abc",
-            _USER_PERMISSIONS,
-            mutation_policy=_mutation_policy("udata/api-v1.delete-dataset", "abc", destructive=True),
-        )
+    with client:
+        policy = _mutation_policy("udata/api-v1.delete-dataset", "abc", destructive=True)
+        with pytest.raises(CatalogValidationError) as error:
+            client.datasets.delete("abc", _USER_PERMISSIONS, mutation_policy=policy)
 
     assert "mutation_receipt" in error.value.__dict__
     assert transport is not None
@@ -1551,8 +1551,10 @@ def test_v1_delete_decodes_the_response_body_through_the_typed_extras_boundary()
 def test_v2_search_facets_with_nonfinite_constants_fail_closed_at_the_client_boundary() -> None:
     body = json.dumps({**json.loads(_page_body()), "facets": {"bad": float("nan")}}).encode()
     routes = _site_first({("GET", "http://127.0.0.1:5640/api/2/datasets/search/?page=1&page_size=20&q=x"): body})
-    with _sync_client(routes) as client, pytest.raises(NativeCatalogError, match="invalid JSON"):
-        client.datasets.search_v2(DatasetSearchQuery(q="x"))
+    with _sync_client(routes) as client:
+        query = DatasetSearchQuery(q="x")
+        with pytest.raises(NativeCatalogError, match="invalid JSON"):
+            client.datasets.search_v2(query)
 
 
 def test_rdf_validation_errors_carry_the_owning_route_operation() -> None:

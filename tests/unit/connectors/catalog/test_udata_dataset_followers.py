@@ -148,7 +148,8 @@ def test_dataset_follower_read_preserves_the_native_page_without_dataset_decodin
     assert isinstance(result, MappingRecord)
     assert result.to_dict()["payload"] == payload
     request = transport.requests[-1]
-    assert request.body is None and request.files == ()
+    assert request.body is None
+    assert request.files == ()
     assert not any(key.lower() == "x-api-key" for key in request.headers)
 
 
@@ -176,7 +177,9 @@ def test_dataset_follower_mutations_keep_exact_wire_counts_and_receipt_targets(
     assert result.receipt.audit_metadata["status_code"] == status
     requests = [request for request in transport.requests if request.url == ORIGIN + PATH]
     assert len(requests) == 1
-    assert requests[0].method == verb and requests[0].body is None and requests[0].files == ()
+    assert requests[0].method == verb
+    assert requests[0].body is None
+    assert requests[0].files == ()
     assert requests[0].headers["X-API-KEY"] == KEY
     assert KEY not in json.dumps(result.to_dict())
 
@@ -203,13 +206,15 @@ def test_dataset_follower_permissions_fail_before_any_io(mode: str, method: str,
     elif defect == "scope":
         permissions = replace(PERMISSIONS, operation_scopes={operation: frozenset({"follow"})})
     transport = _transport(mode, {})
+    mutation_policy = _policy(operation)
     with pytest.raises((ForbiddenError, UnauthenticatedError)) as raised:
         _invoke(
-            mode, transport, method, credentials=credential, permissions=permissions, mutation_policy=_policy(operation)
+            mode, transport, method, credentials=credential, permissions=permissions, mutation_policy=mutation_policy
         )
     assert transport.requests == []
     receipt = _receipt(raised.value)
-    assert receipt.outcome == "rejected" and str(receipt.operation) == operation
+    assert receipt.outcome == "rejected"
+    assert str(receipt.operation) == operation
 
 
 @pytest.mark.parametrize("mode", ["sync", "async"])
@@ -259,8 +264,9 @@ def test_dataset_follower_mutation_policy_fails_before_any_io(mode: str, method:
 def test_dataset_follower_ids_fail_before_any_io(mode: str, method: str, identifier: str | None) -> None:
     transport = _transport(mode, {})
     kwargs: dict[str, Any] = {} if method == "list_dataset_followers" else {"permissions": PERMISSIONS}
+    typed_identifier = cast("str", identifier)
     with pytest.raises(CatalogValidationError) as raised:
-        _invoke(mode, transport, method, cast("str", identifier), **kwargs)
+        _invoke(mode, transport, method, typed_identifier, **kwargs)
     assert transport.requests == []
     if method != "list_dataset_followers":
         assert _receipt(raised.value).outcome == "rejected"
@@ -276,10 +282,12 @@ def test_dataset_follower_malformed_mutation_responses_are_ambiguous(mode: str, 
     operation = FOLLOW if method == "follow_dataset" else UNFOLLOW
     verb = "POST" if operation == FOLLOW else "DELETE"
     transport = _transport(mode, {(verb, ORIGIN + PATH): (200, payload)})
+    mutation_policy = _policy(operation)
     with pytest.raises(CatalogValidationError) as raised:
-        _invoke(mode, transport, method, permissions=PERMISSIONS, mutation_policy=_policy(operation))
+        _invoke(mode, transport, method, permissions=PERMISSIONS, mutation_policy=mutation_policy)
     receipt = _receipt(raised.value)
-    assert receipt.outcome == "ambiguous" and receipt.audit_metadata["status_code"] == 200
+    assert receipt.outcome == "ambiguous"
+    assert receipt.audit_metadata["status_code"] == 200
     assert sum(request.url == ORIGIN + PATH for request in transport.requests) == 1
 
 
@@ -311,11 +319,14 @@ def test_dataset_follower_http_errors_keep_the_failed_receipt(mode: str, method:
     operation = FOLLOW if method == "follow_dataset" else UNFOLLOW
     verb = "POST" if operation == FOLLOW else "DELETE"
     transport = _transport(mode, {(verb, ORIGIN + PATH): (status, {"message": "Refused"})})
+    mutation_policy = _policy(operation)
     with pytest.raises(CatalogError) as raised:
-        _invoke(mode, transport, method, permissions=PERMISSIONS, mutation_policy=_policy(operation))
+        _invoke(mode, transport, method, permissions=PERMISSIONS, mutation_policy=mutation_policy)
     receipt = _receipt(raised.value)
-    assert receipt.outcome == "failed" and receipt.audit_metadata["status_code"] == status
-    assert receipt.target.value == DATASET and str(receipt.operation) == operation
+    assert receipt.outcome == "failed"
+    assert receipt.audit_metadata["status_code"] == status
+    assert receipt.target.value == DATASET
+    assert str(receipt.operation) == operation
     assert sum(request.url == ORIGIN + PATH for request in transport.requests) == 1
 
 
@@ -325,19 +336,21 @@ def test_dataset_followers_refuse_public_mutations(mode: str, method: str) -> No
     operation = FOLLOW if method == "follow_dataset" else UNFOLLOW
     public_origin = "https://example.org"
     transport = _transport(mode, {("GET", public_origin + "/api/1/site/"): {"version": "17.6.0"}})
+    mutation_policy = _policy(operation)
     with pytest.raises(CatalogValidationError) as raised:
-        _invoke(
-            mode, transport, method, origin=public_origin, permissions=PERMISSIONS, mutation_policy=_policy(operation)
-        )
+        _invoke(mode, transport, method, origin=public_origin, permissions=PERMISSIONS, mutation_policy=mutation_policy)
     assert all(request.method == "GET" for request in transport.requests)
     assert _receipt(raised.value).outcome == "rejected"
 
 
 def test_dataset_follower_profile_and_native_protocols_are_route_specific() -> None:
     operations = {str(identifier): operation for identifier, operation in declared_udata_profile().operations.items()}
-    assert operations[LIST].mutation_class == "read" and operations[LIST].auth_class == "public"
-    assert operations[FOLLOW].mutation_class == "update" and operations[FOLLOW].auth_class == "authenticated"
-    assert operations[UNFOLLOW].mutation_class == "delete" and operations[UNFOLLOW].auth_class == "authenticated"
+    assert operations[LIST].mutation_class == "read"
+    assert operations[LIST].auth_class == "public"
+    assert operations[FOLLOW].mutation_class == "update"
+    assert operations[FOLLOW].auth_class == "authenticated"
+    assert operations[UNFOLLOW].mutation_class == "delete"
+    assert operations[UNFOLLOW].auth_class == "authenticated"
     for method in ("list_dataset_followers", "follow_dataset", "unfollow_dataset"):
         assert hasattr(SyncUDataDatasetsService, method)
         assert inspect.iscoroutinefunction(getattr(AsyncUDataDatasetsService, method))
@@ -387,8 +400,9 @@ def test_dataset_follower_dispatch_failure_keeps_its_receipt_without_a_retry(
             return await original_async(request)
 
         monkeypatch.setattr(transport, "send", send_async)
+    mutation_policy = _policy(operation)
     with pytest.raises(failure) as raised:
-        _invoke(mode, transport, method, permissions=PERMISSIONS, mutation_policy=_policy(operation))
+        _invoke(mode, transport, method, permissions=PERMISSIONS, mutation_policy=mutation_policy)
     assert _receipt(raised.value).outcome == ("cancelled" if failure is KeyboardInterrupt else "ambiguous")
     assert sum(request.url == ORIGIN + PATH for request in transport.requests) == 1
 
@@ -406,8 +420,9 @@ def test_dataset_follower_cancellation_keeps_its_receipt(method: str, monkeypatc
         return await original(request)
 
     monkeypatch.setattr(transport, "send", send)
+    mutation_policy = _policy(operation)
     with pytest.raises(asyncio.CancelledError) as raised:
-        _invoke("async", transport, method, permissions=PERMISSIONS, mutation_policy=_policy(operation))
+        _invoke("async", transport, method, permissions=PERMISSIONS, mutation_policy=mutation_policy)
     assert _receipt(raised.value).outcome == "cancelled"
     assert sum(request.url == ORIGIN + PATH for request in transport.requests) == 1
 
@@ -430,5 +445,6 @@ def test_dataset_followers_use_async_credential_resolution() -> None:
         permissions=PERMISSIONS,
         mutation_policy=_policy(FOLLOW),
     )
-    assert isinstance(result, DatasetMutationResult) and result.receipt.outcome == "succeeded"
+    assert isinstance(result, DatasetMutationResult)
+    assert result.receipt.outcome == "succeeded"
     assert provider.calls == 1

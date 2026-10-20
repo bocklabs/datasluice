@@ -377,15 +377,16 @@ def test_dataservice_queries_reject_invalid_input_before_dispatch() -> None:
         DataserviceDatasetLinkInput(())
     with pytest.raises(ValueError):
         DataserviceDatasetLinkInput(("dataset-1", ""))
+    typed_send_legal_notice = cast("bool", "yes")
     with pytest.raises(ValueError):
-        DataserviceDeleteOptions(send_legal_notice=cast("bool", "yes"))
+        DataserviceDeleteOptions(send_legal_notice=typed_send_legal_notice)
 
 
 @pytest.mark.parametrize("oversized", [101, 1_000, 10**9])
 def test_dataservice_paging_is_rejected_above_the_ceiling_before_dispatch(oversized: int) -> None:
     """An arbitrarily large page_size is refused at construction, so no request can ever carry it."""
     router = sync_route_table(with_site_route({}))
-    with sync_client(router, UDATA_CREDENTIAL) as client:
+    with sync_client(router, UDATA_CREDENTIAL):
         with pytest.raises(ValueError, match="1 through 100"):
             DataserviceListQuery(page_size=oversized)
         with pytest.raises(ValueError, match="1 through 100"):
@@ -393,11 +394,11 @@ def test_dataservice_paging_is_rejected_above_the_ceiling_before_dispatch(oversi
         with pytest.raises(ValueError, match="1 through 100"):
             DataserviceFollowersQuery(page_size=oversized)
         with pytest.raises(ValueError, match="1 through 100"):
-            client.dataservices.list_dataservices(DataserviceListQuery(page_size=oversized))
+            DataserviceListQuery(page_size=oversized)
         with pytest.raises(ValueError, match="1 through 100"):
-            client.dataservices.search_dataservices(DataserviceSearchQuery(page_size=oversized))
+            DataserviceSearchQuery(page_size=oversized)
         with pytest.raises(ValueError, match="1 through 100"):
-            client.dataservices.list_dataservice_followers("ds-1", DataserviceFollowersQuery(page_size=oversized))
+            DataserviceFollowersQuery(page_size=oversized)
     assert [r.url for r in router.requests if "/dataservices" in r.url] == []
 
 
@@ -434,10 +435,12 @@ def test_dataservice_paging_accepts_the_exact_ceiling_boundary() -> None:
 )
 def test_dataservice_url_fields_reject_a_non_http_url(url_field: str) -> None:
     """Upstream types every one of these as a URLField, so a non-http value is refused before dispatch."""
+    create_fields = cast("Any", {**_BASE, url_field: "ftp://x/y"})
     with pytest.raises(ValueError, match="absolute http"):
-        DataserviceCreateInput(**cast("Any", {**_BASE, url_field: "ftp://x/y"}))
+        DataserviceCreateInput(**create_fields)
+    update_fields = cast("Any", {url_field: "ftp://x/y"})
     with pytest.raises(ValueError, match="absolute http"):
-        DataserviceUpdateInput(**cast("Any", {url_field: "ftp://x/y"}))
+        DataserviceUpdateInput(**update_fields)
 
 
 @pytest.mark.parametrize(
@@ -456,10 +459,12 @@ def test_dataservice_url_fields_reject_a_non_http_url(url_field: str) -> None:
 )
 def test_dataservice_field_validation_rejects_documented_type_violations(field: str, value: object) -> None:
     """Each documented constraint is enforced on both the create and the patch input."""
+    create_fields = cast("Any", {**_BASE, field: value})
     with pytest.raises(ValueError):
-        DataserviceCreateInput(**cast("Any", {**_BASE, field: value}))
+        DataserviceCreateInput(**create_fields)
+    update_fields = cast("Any", {field: value})
     with pytest.raises(ValueError):
-        DataserviceUpdateInput(**cast("Any", {field: value}))
+        DataserviceUpdateInput(**update_fields)
 
 
 def test_dataservice_nested_inputs_are_deep_frozen_and_json_safe() -> None:
@@ -474,8 +479,9 @@ def test_dataservice_nested_inputs_are_deep_frozen_and_json_safe() -> None:
     with pytest.raises(TypeError):
         cast("dict[str, object]", client_input.extras)["nested"] = "changed"  # type: ignore[assignment]
     assert client_input.payload()["contact_points"] == [{"id": "contact-1"}]
+    fields = cast("Any", {**_BASE, "extras": {"bad": {1, 2}}})
     with pytest.raises(ValueError, match="JSON-safe"):
-        DataserviceCreateInput(**cast("Any", {**_BASE, "extras": {"bad": {1, 2}}}))
+        DataserviceCreateInput(**fields)
 
 
 def test_every_dataservice_read_dispatches_under_its_own_operation_identity() -> None:
@@ -587,8 +593,10 @@ def test_rows93_94_feature_transitions_use_exact_methods_and_require_admin(metho
     )
     with sync_client(router, UDATA_CREDENTIAL) as client:
         getattr(client.dataservices, method_name)("ds-1", ADMIN_PERMISSIONS, _policy(operation, "ds-1"))
+        method = getattr(client.dataservices, method_name)
+        policy = _policy(operation, "ds-1")
         with pytest.raises(ForbiddenError):
-            getattr(client.dataservices, method_name)("ds-1", EDIT_ONLY_PERMISSIONS, _policy(operation, "ds-1"))
+            method("ds-1", EDIT_ONLY_PERMISSIONS, policy)
     writes = [r for r in router.requests if "/featured/" in r.url]
     assert len(writes) == 1, "the admin tier dispatches once; the non-admin tier dispatches nothing"
     expected_method = "POST" if method_name == "feature_dataservice" else "DELETE"
@@ -739,12 +747,9 @@ def test_dataservice_mutation_failure_yields_redacted_receipt_with_exact_target(
         with_site_route({("DELETE", f"{ORIGIN}{DATASERVICES}/ds-1/"): (404, {"message": "Not found"})})
     )
     with sync_client(router, UDATA_CREDENTIAL) as client:
+        policy = _policy(wire.DELETE_DATASERVICE_OPERATION, "ds-1", destructive=True)
         with pytest.raises(CatalogNotFoundError) as error:
-            client.dataservices.delete_dataservice(
-                "ds-1",
-                EDIT_ONLY_PERMISSIONS,
-                _policy(wire.DELETE_DATASERVICE_OPERATION, "ds-1", destructive=True),
-            )
+            client.dataservices.delete_dataservice("ds-1", EDIT_ONLY_PERMISSIONS, policy)
         receipt = error.value.__dict__["mutation_receipt"]
         assert receipt.target.value == "ds-1"
         assert receipt.outcome == "failed"
@@ -958,12 +963,9 @@ def test_dataservice_sync_cancelled_mutation_records_a_cancelled_receipt_with_th
     """A cancelled delete stays visible as `cancelled` against its exact target rather than collapsing to `failed`."""
     client, _ = _dataservice_sync_client(KeyboardInterrupt())
 
+    policy = _policy(wire.DELETE_DATASERVICE_OPERATION, "ds-1", destructive=True)
     with pytest.raises(KeyboardInterrupt) as stopped:
-        client.dataservices.delete_dataservice(
-            "ds-1",
-            EDIT_ONLY_PERMISSIONS,
-            _policy(wire.DELETE_DATASERVICE_OPERATION, "ds-1", destructive=True),
-        )
+        client.dataservices.delete_dataservice("ds-1", EDIT_ONLY_PERMISSIONS, policy)
 
     receipt = stopped.value.__dict__["mutation_receipt"]
     assert receipt.outcome == "cancelled"
@@ -1018,10 +1020,9 @@ def test_dataservice_async_parallel_reads_preserve_results_and_owned_cleanup() -
 
 def test_dataservice_sync_timed_out_mutation_keeps_failed_receipt_and_ready_post_state() -> None:
     client, transport = _dataservice_sync_client(TimeoutError())
+    policy = _policy(wire.DELETE_DATASERVICE_OPERATION, "ds-1", destructive=True)
     with pytest.raises(TimeoutError) as stopped:
-        client.dataservices.delete_dataservice(
-            "ds-1", EDIT_ONLY_PERMISSIONS, _policy(wire.DELETE_DATASERVICE_OPERATION, "ds-1", destructive=True)
-        )
+        client.dataservices.delete_dataservice("ds-1", EDIT_ONLY_PERMISSIONS, policy)
     receipt = stopped.value.__dict__["mutation_receipt"]
     assert receipt.outcome == "failed"
     assert receipt.target.value == "ds-1"
@@ -1035,10 +1036,9 @@ def test_dataservice_async_timed_out_mutation_keeps_failed_receipt_and_ready_pos
     client, transport = _dataservice_async_client(TimeoutError())
 
     async def run() -> None:
+        policy = _policy(wire.DELETE_DATASERVICE_OPERATION, "ds-1", destructive=True)
         with pytest.raises(TimeoutError) as stopped:
-            await client.dataservices.delete_dataservice(
-                "ds-1", EDIT_ONLY_PERMISSIONS, _policy(wire.DELETE_DATASERVICE_OPERATION, "ds-1", destructive=True)
-            )
+            await client.dataservices.delete_dataservice("ds-1", EDIT_ONLY_PERMISSIONS, policy)
         receipt = stopped.value.__dict__["mutation_receipt"]
         assert receipt.outcome == "failed"
         assert receipt.target.value == "ds-1"
@@ -1106,12 +1106,9 @@ def test_dataservice_async_cancelled_mutation_records_a_cancelled_receipt_with_t
     client, _ = _dataservice_async_client(asyncio.CancelledError())
 
     async def run() -> None:
+        policy = _policy(wire.DELETE_DATASERVICE_OPERATION, "ds-1", destructive=True)
         with pytest.raises(asyncio.CancelledError) as cancelled:
-            await client.dataservices.delete_dataservice(
-                "ds-1",
-                EDIT_ONLY_PERMISSIONS,
-                _policy(wire.DELETE_DATASERVICE_OPERATION, "ds-1", destructive=True),
-            )
+            await client.dataservices.delete_dataservice("ds-1", EDIT_ONLY_PERMISSIONS, policy)
         receipt = cancelled.value.__dict__["mutation_receipt"]
         assert receipt.outcome == "cancelled"
         assert receipt.target.value == "ds-1"

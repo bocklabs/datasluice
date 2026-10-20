@@ -6,7 +6,8 @@ import asyncio
 import inspect
 import json
 import threading
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import replace
 from datetime import date
 from functools import lru_cache
@@ -75,7 +76,7 @@ from datasluice.runtime.defaults import create_default_async_transport, create_d
 from datasluice.runtime.events import EventEmitter
 from datasluice.runtime.extras import require_extra
 from datasluice.runtime.mutation import build_mutation_receipt
-from datasluice.runtime.resilience import BreakerRegistry, DeadlineMonitor, RetryLoop
+from datasluice.runtime.resilience import BreakerRegistry, CircuitKey, DeadlineMonitor, RetryLoop
 from datasluice.runtime.transport.base import (
     CatalogTransport,
     RuntimeRequest,
@@ -311,7 +312,236 @@ def declared_ckan_profile() -> DeclaredCapabilityProfile:
     )
 
 
-class SyncCKANClient:
+class _CKANClientState:
+    _capabilities: EffectiveCapabilityCache
+    _probe_runner: ProbeRunner | AsyncProbeRunner | None
+
+    def _initialize(
+        self,
+        settings: CKANClientSettings,
+        clock: Callable[[], float],
+        emitter: EventEmitter | None,
+        owns_transport: bool,
+        inventory: ActionInventory,
+    ) -> None:
+        self._owns_transport = owns_transport
+        self._origin = settings.base_url
+        self._credential_scope = credential_scope(settings.credential)
+        self._profile = self._capabilities.baseline_profile
+        self._probe_policy = settings.probe_policy
+        self._credentials = settings.credential
+        self._budget = settings.budget or TimeBudget()
+        self._breakers = settings.breakers or BreakerRegistry(
+            failure_threshold=DEFAULT_BREAKER_FAILURE_THRESHOLD,
+            cooldown=DEFAULT_BREAKER_COOLDOWN_SECONDS,
+            clock=clock,
+        )
+        self._max_attempts = settings.max_attempts
+        self._clock = clock
+        self._emitter = emitter or EventEmitter()
+        self._inventory = inventory
+        self._rate_policy = settings.rate_policy
+        self._max_upload_bytes = settings.max_upload_bytes
+        self._closed = False
+
+    @property
+    def credentials(self) -> CKANCredential | CredentialResolver | None:
+        """Expose the injected caller-owned credential resolver or provider."""
+        return self._credentials
+
+    @property
+    def rate_policy(self) -> object | None:
+        """Expose the portal-derived rate policy attached at construction."""
+        return self._rate_policy
+
+    def _require_optional_evidence(self, owning_id: OperationId) -> None:
+        if self._probe_policy != "auto":
+            return
+        declared = self._profile.declared_profile.operations.get(owning_id)
+        if declared is None or declared.capability_class is not CapabilityClass.OPTIONAL:
+            return
+        if self._probe_runner is not None:
+            return
+        raise UnsupportedCapabilityError(
+            f"{owning_id} is an optional CKAN capability and requires probe evidence before dispatch.",
+            operation=str(owning_id),
+            platform=PLATFORM.value,
+            capability_state="optional",
+            safe_action=(
+                "Attach a probe runner (probe_runner= or async_probe_runner=) or select declared-baseline "
+                "probing explicitly via CKANClientSettings(probe_policy='declared-baseline')."
+            ),
+        )
+
+    def _prepare_dispatch(
+        self,
+        owning_id: OperationId,
+        effective: EffectiveCapabilityProfile,
+        operation: CatalogOperationRequest,
+        entry: ActionEntry,
+        credential: object,
+        files: tuple[UploadPart, ...],
+    ) -> tuple[RuntimeRequest, IdempotencyPolicy, DeadlineMonitor, CircuitKey]:
+        build_catalog_operation_guard(owning_id, effective).require_allowed()
+        policy = require_mutation_tier(entry.mutation_class, owning_id, operation.mutation_policy)
+        idempotency = (
+            policy.idempotency if policy is not None else IdempotencyPolicy(safe=entry.mutation_class == "read")
+        )
+        params = {key: value for key, value in operation.payload.items() if key != "action"}
+        request = _dispatch_request(
+            origin=self._origin,
+            entry=entry,
+            params=params,
+            credential=credential,
+            files=files,
+            max_bytes=self._max_upload_bytes,
+        )
+        deadline = DeadlineMonitor(self._budget, clock=self._clock)
+        deadline.assert_dispatchable(str(owning_id), PLATFORM.value)
+        return request, idempotency, deadline, _circuit_key(request, credential)
+
+    def _decode(
+        self, owning_id: OperationId, entry: ActionEntry, response: RuntimeResponse, scope: str
+    ) -> ResultEnvelope[CKANResultItem]:
+        if not 200 <= response.status_code < 300:
+            response_class = _STATUS_RESPONSE_CLASSES.get(response.status_code)
+            if response_class is not None:
+                self._capabilities.record_response(owning_id, response_class, credential_scope=scope)
+            raise map_catalog_error(
+                NativeCatalogError(
+                    "Catalog operation returned an unsuccessful HTTP status.",
+                    operation=str(owning_id),
+                    platform=PLATFORM.value,
+                    status_code=response.status_code,
+                    retry_after=response.retry_after,
+                )
+            )
+        try:
+            payload = json.loads(response.body)
+        except (TypeError, ValueError) as exc:
+            raise NativeCatalogError(
+                "Catalog operation returned an invalid JSON result.",
+                operation=str(owning_id),
+                platform=PLATFORM.value,
+            ) from exc
+        bare = parse_action_envelope(payload, operation=str(owning_id), platform=PLATFORM)
+        return shape_result_envelope(entry.name, bare)
+
+    def _registry_entry(self, action: object, group: str, declared_operation_id: str) -> ActionEntry:
+        if not isinstance(action, str) or not action:
+            raise CatalogValidationError(
+                "CKAN native operations require the manifest-registered action name in the operation payload.",
+                operation=declared_operation_id,
+                platform=PLATFORM.value,
+                safe_action="Pass the registered action name under the 'action' payload key.",
+            )
+        entry = self._inventory.lookup(action)
+        if entry.group != group or entry.owning_operation_id != declared_operation_id:
+            raise CatalogValidationError(
+                f"The action {action!r} is not registered under {declared_operation_id} in group {group!r}.",
+                operation=declared_operation_id,
+                platform=PLATFORM.value,
+                safe_action="Dispatch the action through its owning native group projection.",
+            )
+        return entry
+
+    def _emit(self, owning_id: OperationId, outcome: str, **metadata: object) -> None:
+        self._emitter.record(
+            operation_id=str(owning_id),
+            platform=PLATFORM.value,
+            outcome=outcome,
+            metadata=metadata,
+        )
+
+    def _emit_breaker_change(self, owning_id: OperationId, before: bool, after: bool) -> None:
+        if before != after:
+            self._emit(owning_id, "breaker_state_change", breaker_open=after)
+
+    def capability(self, operation_id: str) -> str:
+        """Return the cached effective classification without dispatching transport I/O."""
+        operation = _peek_operation_id(operation_id, self._profile)
+        state = self._capabilities.peek(operation, credential_scope=self._credential_scope).guard(operation).state
+        return _capability_value(state)
+
+    def invalidate(self, operation_id: str | OperationId | None = None) -> None:
+        """Discard all effective capability state or one operation's state."""
+        target = None
+        if isinstance(operation_id, OperationId):
+            target = operation_id
+        elif operation_id is not None:
+            target = _peek_operation_id(operation_id, self._profile)
+        self._capabilities.invalidate(target)
+
+    def platform_metadata(self) -> Mapping[str, object]:
+        """Return safe pinned-profile metadata."""
+        declared = self._profile.declared_profile
+        return {"platform": next(iter(declared.operations)).platform, "profile_version": declared.profile_version}
+
+
+class _DispatchState:
+    def __init__(self, client: _CKANClientState, owning_id: OperationId, key: CircuitKey) -> None:
+        self.client = client
+        self.owning_id = owning_id
+        self.key = key
+        self.attempts = 0
+        self.response: RuntimeResponse | None = None
+
+    @contextmanager
+    def attempt(self) -> Iterator[None]:
+        client = self.client
+        if not client._breakers.admit(self.key):
+            client._emit(self.owning_id, "breaker_open")
+            raise CatalogUnavailableError(
+                "The catalog origin circuit is open after consecutive transport failures.",
+                operation=str(self.owning_id),
+                platform=PLATFORM.value,
+                capability_state="unavailable",
+                safe_action="Wait for the circuit cool-down or explicitly reset the circuit before retrying.",
+            )
+        self.attempts += 1
+        before = client._breakers.inspect(self.key)
+        recorded = False
+        self.response = None
+        try:
+            try:
+                yield
+            except TransportError:
+                after = client._breakers.record_transport_failure(self.key)
+                recorded = True
+                client._emit_breaker_change(self.owning_id, before.open, after.open)
+                raise
+            assert self.response is not None
+            after = client._breakers.record_response(self.key, self.response.status_code)
+            recorded = True
+            client._emit_breaker_change(self.owning_id, before.open, after.open)
+        finally:
+            if not recorded:
+                client._breakers.release_trial(self.key)
+
+    @contextmanager
+    def outcome(self, deadline: DeadlineMonitor) -> Iterator[None]:
+        client = self.client
+        try:
+            yield
+        except BudgetExhaustedError:
+            client._emit(
+                self.owning_id,
+                "budget_exhausted",
+                budget_usage=max(0.0, client._budget.total - deadline.remaining()),
+            )
+            raise
+        except Exception:
+            client._emit(self.owning_id, "failed", retry_count=max(0, self.attempts - 1))
+            raise
+        client._emit(
+            self.owning_id,
+            "succeeded",
+            retry_count=max(0, self.attempts - 1),
+            budget_usage=max(0.0, client._budget.total - deadline.remaining()),
+        )
+
+
+class SyncCKANClient(_CKANClientState):
     """Synchronous dual-surface CKAN client: normalized projections plus native action groups."""
 
     def __init__(
@@ -326,8 +556,6 @@ class SyncCKANClient:
         inventory: ActionInventory = CKAN_ACTIONS,
     ) -> None:
         self._transport = transport
-        self._owns_transport = owns_transport
-        self._origin = settings.base_url
         self._capabilities = EffectiveCapabilityCache(
             profile,
             probe_runner=settings.probe_runner,
@@ -335,41 +563,15 @@ class SyncCKANClient:
             clock=clock,
             deployment_origin=settings.base_url if settings.base_url.startswith(_HTTPS_PREFIX) else None,
         )
-        self._credential_scope = credential_scope(settings.credential)
         self._scope_lock = threading.Lock()
-        self._profile = self._capabilities.baseline_profile
         self._probe_runner = settings.probe_runner
-        self._probe_policy = settings.probe_policy
-        self._credentials = settings.credential
-        self._budget = settings.budget or TimeBudget()
-        self._breakers = settings.breakers or BreakerRegistry(
-            failure_threshold=DEFAULT_BREAKER_FAILURE_THRESHOLD,
-            cooldown=DEFAULT_BREAKER_COOLDOWN_SECONDS,
-            clock=clock,
-        )
-        self._max_attempts = settings.max_attempts
-        self._clock = clock
         self._retry_sleep = settings.retry_sleep or sleep
-        self._emitter = emitter or EventEmitter()
-        self._inventory = inventory
-        self._rate_policy = settings.rate_policy
-        self._max_upload_bytes = settings.max_upload_bytes
-        self._closed = False
+        self._initialize(settings, clock, emitter, owns_transport, inventory)
 
     @property
     def transport(self) -> CatalogTransport:
         """Expose the underlying transport as the public introspection seam."""
         return self._transport
-
-    @property
-    def credentials(self) -> CKANCredential | CredentialResolver | None:
-        """Expose the injected caller-owned credential resolver or provider."""
-        return self._credentials
-
-    @property
-    def rate_policy(self) -> object | None:
-        """Expose the portal-derived rate policy attached at construction."""
-        return self._rate_policy
 
     @property
     def datasets(self) -> SyncDatasetsService:
@@ -453,25 +655,6 @@ class SyncCKANClient:
 
         return SyncExtensionsService(self)
 
-    def _require_optional_evidence(self, owning_id: OperationId) -> None:
-        if self._probe_policy != "auto":
-            return
-        declared = self._profile.declared_profile.operations.get(owning_id)
-        if declared is None or declared.capability_class is not CapabilityClass.OPTIONAL:
-            return
-        if self._probe_runner is not None:
-            return
-        raise UnsupportedCapabilityError(
-            f"{owning_id} is an optional CKAN capability and requires probe evidence before dispatch.",
-            operation=str(owning_id),
-            platform=PLATFORM.value,
-            capability_state="optional",
-            safe_action=(
-                "Attach a probe runner (probe_runner= or async_probe_runner=) or select declared-baseline "
-                "probing explicitly via CKANClientSettings(probe_policy='declared-baseline')."
-            ),
-        )
-
     @overload
     def _dispatch(
         self,
@@ -515,57 +698,18 @@ class SyncCKANClient:
             if scope != self._credential_scope:
                 self._credential_scope = scope
         effective = self._capabilities.resolve(owning_id)
-        build_catalog_operation_guard(owning_id, effective).require_allowed()
-        policy = require_mutation_tier(entry.mutation_class, owning_id, operation.mutation_policy)
-        idempotency = (
-            policy.idempotency if policy is not None else IdempotencyPolicy(safe=entry.mutation_class == "read")
+        request, idempotency, deadline, key = self._prepare_dispatch(
+            owning_id, effective, operation, entry, credential, files
         )
-        params = {key: value for key, value in operation.payload.items() if key != "action"}
-        request = _dispatch_request(
-            origin=self._origin,
-            entry=entry,
-            params=params,
-            credential=credential,
-            files=files,
-            max_bytes=self._max_upload_bytes,
-        )
-        deadline = DeadlineMonitor(self._budget, clock=self._clock)
-        deadline.assert_dispatchable(str(owning_id), PLATFORM.value)
-        key = _circuit_key(request, credential)
-
-        attempts = 0
+        state = _DispatchState(self, owning_id, key)
 
         def send() -> RuntimeResponse:
-            nonlocal attempts
-            if not self._breakers.admit(key):
-                self._emit(owning_id, "breaker_open")
-                raise CatalogUnavailableError(
-                    "The catalog origin circuit is open after consecutive transport failures.",
-                    operation=str(owning_id),
-                    platform=PLATFORM.value,
-                    capability_state="unavailable",
-                    safe_action="Wait for the circuit cool-down or explicitly reset the circuit before retrying.",
-                )
-            attempts += 1
-            before = self._breakers.inspect(key)
-            recorded = False
-            try:
-                try:
-                    response = self._transport.send(request)
-                except TransportError:
-                    after = self._breakers.record_transport_failure(key)
-                    recorded = True
-                    self._emit_breaker_change(owning_id, before.open, after.open)
-                    raise
-                after = self._breakers.record_response(key, response.status_code)
-                recorded = True
-                self._emit_breaker_change(owning_id, before.open, after.open)
+            with state.attempt():
+                response = self._transport.send(request)
+                state.response = response
                 return response
-            finally:
-                if not recorded:
-                    self._breakers.release_trial(key)
 
-        try:
+        with state.outcome(deadline):
             response = RetryLoop(
                 budget=self._budget,
                 idempotency=idempotency,
@@ -574,103 +718,10 @@ class SyncCKANClient:
                 sleep=self._retry_sleep,
             ).run(send)
             result = self._decode(owning_id, entry, response, scope)
-        except BudgetExhaustedError:
-            self._emit(
-                owning_id,
-                "budget_exhausted",
-                budget_usage=max(0.0, self._budget.total - deadline.remaining()),
-            )
-            raise
-        except Exception:
-            self._emit(owning_id, "failed", retry_count=max(0, attempts - 1))
-            raise
-        self._emit(
-            owning_id,
-            "succeeded",
-            retry_count=max(0, attempts - 1),
-            budget_usage=max(0.0, self._budget.total - deadline.remaining()),
-        )
         if decoder is not None:
             items = tuple(decoder(item) for item in result.items)
             return ResultEnvelope(items=items, page=result.page)
         return result
-
-    def _decode(
-        self, owning_id: OperationId, entry: ActionEntry, response: RuntimeResponse, scope: str
-    ) -> ResultEnvelope[CKANResultItem]:
-        if not 200 <= response.status_code < 300:
-            response_class = _STATUS_RESPONSE_CLASSES.get(response.status_code)
-            if response_class is not None:
-                self._capabilities.record_response(owning_id, response_class, credential_scope=scope)
-            raise map_catalog_error(
-                NativeCatalogError(
-                    "Catalog operation returned an unsuccessful HTTP status.",
-                    operation=str(owning_id),
-                    platform=PLATFORM.value,
-                    status_code=response.status_code,
-                    retry_after=response.retry_after,
-                )
-            )
-        try:
-            payload = json.loads(response.body)
-        except (TypeError, ValueError) as exc:
-            raise NativeCatalogError(
-                "Catalog operation returned an invalid JSON result.",
-                operation=str(owning_id),
-                platform=PLATFORM.value,
-            ) from exc
-        bare = parse_action_envelope(payload, operation=str(owning_id), platform=PLATFORM)
-        return shape_result_envelope(entry.name, bare)
-
-    def _registry_entry(self, action: object, group: str, declared_operation_id: str) -> ActionEntry:
-        if not isinstance(action, str) or not action:
-            raise CatalogValidationError(
-                "CKAN native operations require the manifest-registered action name in the operation payload.",
-                operation=declared_operation_id,
-                platform=PLATFORM.value,
-                safe_action="Pass the registered action name under the 'action' payload key.",
-            )
-        entry = self._inventory.lookup(action)
-        if entry.group != group or entry.owning_operation_id != declared_operation_id:
-            raise CatalogValidationError(
-                f"The action {action!r} is not registered under {declared_operation_id} in group {group!r}.",
-                operation=declared_operation_id,
-                platform=PLATFORM.value,
-                safe_action="Dispatch the action through its owning native group projection.",
-            )
-        return entry
-
-    def _emit(self, owning_id: OperationId, outcome: str, **metadata: object) -> None:
-        self._emitter.record(
-            operation_id=str(owning_id),
-            platform=PLATFORM.value,
-            outcome=outcome,
-            metadata=metadata,
-        )
-
-    def _emit_breaker_change(self, owning_id: OperationId, before: bool, after: bool) -> None:
-        if before != after:
-            self._emit(owning_id, "breaker_state_change", breaker_open=after)
-
-    def capability(self, operation_id: str) -> str:
-        """Return the cached effective classification without dispatching transport I/O."""
-        operation = _peek_operation_id(operation_id, self._profile)
-        state = self._capabilities.peek(operation, credential_scope=self._credential_scope).guard(operation).state
-        return _capability_value(state)
-
-    def invalidate(self, operation_id: str | OperationId | None = None) -> None:
-        """Discard all effective capability state or one operation's state."""
-        target = None
-        if isinstance(operation_id, OperationId):
-            target = operation_id
-        elif operation_id is not None:
-            target = _peek_operation_id(operation_id, self._profile)
-        self._capabilities.invalidate(target)
-
-    def platform_metadata(self) -> Mapping[str, object]:
-        """Return safe pinned-profile metadata."""
-        declared = self._profile.declared_profile
-        return {"platform": next(iter(declared.operations)).platform, "profile_version": declared.profile_version}
 
     def close(self) -> None:
         """Close the client and its owned transport exactly once."""
@@ -690,7 +741,7 @@ class SyncCKANClient:
         self.close()
 
 
-class AsyncCKANClient:
+class AsyncCKANClient(_CKANClientState):
     """Asynchronous dual-surface CKAN client: normalized projections plus native action groups."""
 
     def __init__(
@@ -705,8 +756,6 @@ class AsyncCKANClient:
         inventory: ActionInventory = CKAN_ACTIONS,
     ) -> None:
         self._transport = transport
-        self._owns_transport = owns_transport
-        self._origin = settings.base_url
         self._capabilities = EffectiveCapabilityCache(
             profile,
             async_probe_runner=settings.async_probe_runner,
@@ -714,40 +763,14 @@ class AsyncCKANClient:
             clock=clock,
             deployment_origin=settings.base_url if settings.base_url.startswith(_HTTPS_PREFIX) else None,
         )
-        self._credential_scope = credential_scope(settings.credential)
-        self._profile = self._capabilities.baseline_profile
         self._probe_runner = settings.async_probe_runner
-        self._probe_policy = settings.probe_policy
-        self._credentials = settings.credential
-        self._budget = settings.budget or TimeBudget()
-        self._breakers = settings.breakers or BreakerRegistry(
-            failure_threshold=DEFAULT_BREAKER_FAILURE_THRESHOLD,
-            cooldown=DEFAULT_BREAKER_COOLDOWN_SECONDS,
-            clock=clock,
-        )
-        self._max_attempts = settings.max_attempts
-        self._clock = clock
         self._retry_sleep = settings.async_retry_sleep or asyncio.sleep
-        self._emitter = emitter or EventEmitter()
-        self._inventory = inventory
-        self._rate_policy = settings.rate_policy
-        self._max_upload_bytes = settings.max_upload_bytes
-        self._closed = False
+        self._initialize(settings, clock, emitter, owns_transport, inventory)
 
     @property
     def transport(self) -> AsyncCatalogTransport:
         """Expose the underlying transport as the public introspection seam."""
         return self._transport
-
-    @property
-    def credentials(self) -> CKANCredential | CredentialResolver | None:
-        """Expose the injected caller-owned credential resolver or provider."""
-        return self._credentials
-
-    @property
-    def rate_policy(self) -> object | None:
-        """Expose the portal-derived rate policy attached at construction."""
-        return self._rate_policy
 
     @property
     def datasets(self) -> AsyncDatasetsService:
@@ -835,25 +858,6 @@ class AsyncCKANClient:
 
         return AsyncExtensionsService(self)
 
-    def _require_optional_evidence(self, owning_id: OperationId) -> None:
-        if self._probe_policy != "auto":
-            return
-        declared = self._profile.declared_profile.operations.get(owning_id)
-        if declared is None or declared.capability_class is not CapabilityClass.OPTIONAL:
-            return
-        if self._probe_runner is not None:
-            return
-        raise UnsupportedCapabilityError(
-            f"{owning_id} is an optional CKAN capability and requires probe evidence before dispatch.",
-            operation=str(owning_id),
-            platform=PLATFORM.value,
-            capability_state="optional",
-            safe_action=(
-                "Attach a probe runner (probe_runner= or async_probe_runner=) or select declared-baseline "
-                "probing explicitly via CKANClientSettings(probe_policy='declared-baseline')."
-            ),
-        )
-
     @overload
     async def _dispatch(
         self,
@@ -896,57 +900,18 @@ class AsyncCKANClient:
         if scope != self._credential_scope:
             self._credential_scope = scope
         effective = await self._capabilities.resolve_async(owning_id)
-        build_catalog_operation_guard(owning_id, effective).require_allowed()
-        policy = require_mutation_tier(entry.mutation_class, owning_id, operation.mutation_policy)
-        idempotency = (
-            policy.idempotency if policy is not None else IdempotencyPolicy(safe=entry.mutation_class == "read")
+        request, idempotency, deadline, key = self._prepare_dispatch(
+            owning_id, effective, operation, entry, credential, files
         )
-        params = {key: value for key, value in operation.payload.items() if key != "action"}
-        request = _dispatch_request(
-            origin=self._origin,
-            entry=entry,
-            params=params,
-            credential=credential,
-            files=files,
-            max_bytes=self._max_upload_bytes,
-        )
-        deadline = DeadlineMonitor(self._budget, clock=self._clock)
-        deadline.assert_dispatchable(str(owning_id), PLATFORM.value)
-        key = _circuit_key(request, credential)
-
-        attempts = 0
+        state = _DispatchState(self, owning_id, key)
 
         async def send() -> RuntimeResponse:
-            nonlocal attempts
-            if not self._breakers.admit(key):
-                self._emit(owning_id, "breaker_open")
-                raise CatalogUnavailableError(
-                    "The catalog origin circuit is open after consecutive transport failures.",
-                    operation=str(owning_id),
-                    platform=PLATFORM.value,
-                    capability_state="unavailable",
-                    safe_action="Wait for the circuit cool-down or explicitly reset the circuit before retrying.",
-                )
-            attempts += 1
-            before = self._breakers.inspect(key)
-            recorded = False
-            try:
-                try:
-                    response = await self._transport.send(request)
-                except TransportError:
-                    after = self._breakers.record_transport_failure(key)
-                    recorded = True
-                    self._emit_breaker_change(owning_id, before.open, after.open)
-                    raise
-                after = self._breakers.record_response(key, response.status_code)
-                recorded = True
-                self._emit_breaker_change(owning_id, before.open, after.open)
+            with state.attempt():
+                response = await self._transport.send(request)
+                state.response = response
                 return response
-            finally:
-                if not recorded:
-                    self._breakers.release_trial(key)
 
-        try:
+        with state.outcome(deadline):
             response = await RetryLoop(
                 budget=self._budget,
                 idempotency=idempotency,
@@ -955,103 +920,10 @@ class AsyncCKANClient:
                 sleep=lambda _: None,
             ).run_async(send, sleep=self._retry_sleep)
             result = self._decode(owning_id, entry, response, scope)
-        except BudgetExhaustedError:
-            self._emit(
-                owning_id,
-                "budget_exhausted",
-                budget_usage=max(0.0, self._budget.total - deadline.remaining()),
-            )
-            raise
-        except Exception:
-            self._emit(owning_id, "failed", retry_count=max(0, attempts - 1))
-            raise
-        self._emit(
-            owning_id,
-            "succeeded",
-            retry_count=max(0, attempts - 1),
-            budget_usage=max(0.0, self._budget.total - deadline.remaining()),
-        )
         if decoder is not None:
             items = tuple(decoder(item) for item in result.items)
             return ResultEnvelope(items=items, page=result.page)
         return result
-
-    def _decode(
-        self, owning_id: OperationId, entry: ActionEntry, response: RuntimeResponse, scope: str
-    ) -> ResultEnvelope[CKANResultItem]:
-        if not 200 <= response.status_code < 300:
-            response_class = _STATUS_RESPONSE_CLASSES.get(response.status_code)
-            if response_class is not None:
-                self._capabilities.record_response(owning_id, response_class, credential_scope=scope)
-            raise map_catalog_error(
-                NativeCatalogError(
-                    "Catalog operation returned an unsuccessful HTTP status.",
-                    operation=str(owning_id),
-                    platform=PLATFORM.value,
-                    status_code=response.status_code,
-                    retry_after=response.retry_after,
-                )
-            )
-        try:
-            payload = json.loads(response.body)
-        except (TypeError, ValueError) as exc:
-            raise NativeCatalogError(
-                "Catalog operation returned an invalid JSON result.",
-                operation=str(owning_id),
-                platform=PLATFORM.value,
-            ) from exc
-        bare = parse_action_envelope(payload, operation=str(owning_id), platform=PLATFORM)
-        return shape_result_envelope(entry.name, bare)
-
-    def _registry_entry(self, action: object, group: str, declared_operation_id: str) -> ActionEntry:
-        if not isinstance(action, str) or not action:
-            raise CatalogValidationError(
-                "CKAN native operations require the manifest-registered action name in the operation payload.",
-                operation=declared_operation_id,
-                platform=PLATFORM.value,
-                safe_action="Pass the registered action name under the 'action' payload key.",
-            )
-        entry = self._inventory.lookup(action)
-        if entry.group != group or entry.owning_operation_id != declared_operation_id:
-            raise CatalogValidationError(
-                f"The action {action!r} is not registered under {declared_operation_id} in group {group!r}.",
-                operation=declared_operation_id,
-                platform=PLATFORM.value,
-                safe_action="Dispatch the action through its owning native group projection.",
-            )
-        return entry
-
-    def _emit(self, owning_id: OperationId, outcome: str, **metadata: object) -> None:
-        self._emitter.record(
-            operation_id=str(owning_id),
-            platform=PLATFORM.value,
-            outcome=outcome,
-            metadata=metadata,
-        )
-
-    def _emit_breaker_change(self, owning_id: OperationId, before: bool, after: bool) -> None:
-        if before != after:
-            self._emit(owning_id, "breaker_state_change", breaker_open=after)
-
-    def capability(self, operation_id: str) -> str:
-        """Return the cached effective classification without dispatching transport I/O."""
-        operation = _peek_operation_id(operation_id, self._profile)
-        state = self._capabilities.peek(operation, credential_scope=self._credential_scope).guard(operation).state
-        return _capability_value(state)
-
-    def invalidate(self, operation_id: str | OperationId | None = None) -> None:
-        """Discard all effective capability state or one operation's state."""
-        target = None
-        if isinstance(operation_id, OperationId):
-            target = operation_id
-        elif operation_id is not None:
-            target = _peek_operation_id(operation_id, self._profile)
-        self._capabilities.invalidate(target)
-
-    def platform_metadata(self) -> Mapping[str, object]:
-        """Return safe pinned-profile metadata."""
-        declared = self._profile.declared_profile
-        return {"platform": next(iter(declared.operations)).platform, "profile_version": declared.profile_version}
 
     async def aclose(self) -> None:
         """Close the client and its owned transport exactly once."""

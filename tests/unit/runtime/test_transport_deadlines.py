@@ -28,9 +28,10 @@ def test_httpx_stops_a_response_at_the_operation_deadline() -> None:
 
     deadline = DeadlineMonitor(TimeBudget(connect=1, read=1, write=1, total=1), clock=lambda: now[0])
     transport = HttpxCatalogTransport(transport=httpx.MockTransport(lambda _: httpx.Response(200, stream=Stream())))
+    request = RuntimeRequest("GET", "https://example.test", max_response_bytes=100, deadline=deadline)
     try:
         with pytest.raises(BudgetExhaustedError):
-            transport.send(RuntimeRequest("GET", "https://example.test", max_response_bytes=100, deadline=deadline))
+            transport.send(request)
     finally:
         transport.close()
     assert closed == [True]
@@ -55,11 +56,10 @@ def test_async_httpx_stops_a_response_at_the_operation_deadline() -> None:
         transport = AsyncHttpxCatalogTransport(
             transport=httpx.MockTransport(lambda _: httpx.Response(200, stream=Stream()))
         )
+        request = RuntimeRequest("GET", "https://example.test", max_response_bytes=100, deadline=deadline)
         try:
             with pytest.raises(BudgetExhaustedError):
-                await transport.send(
-                    RuntimeRequest("GET", "https://example.test", max_response_bytes=100, deadline=deadline)
-                )
+                await transport.send(request)
         finally:
             await transport.aclose()
 
@@ -79,9 +79,10 @@ def test_redirect_preserves_the_operation_deadline() -> None:
 
     transport = HttpxCatalogTransport(transport=httpx.MockTransport(respond))
     deadline = DeadlineMonitor(TimeBudget(connect=1, read=1, write=1, total=1), clock=lambda: now[0])
+    request = RuntimeRequest("GET", "https://example.test", deadline=deadline)
     try:
         with pytest.raises(BudgetExhaustedError):
-            transport.send(RuntimeRequest("GET", "https://example.test", deadline=deadline))
+            transport.send(request)
     finally:
         transport.close()
     assert len(calls) == 1

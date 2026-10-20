@@ -99,8 +99,10 @@ def test_report_rejects_unversioned_or_non_strict_payloads() -> None:
 
 
 def test_report_rejects_outcomes_outside_its_required_cases() -> None:
+    outcome = _outcome()
+    outcomes = (outcome, _outcome(mode="async"))
     with pytest.raises(ValueError, match="expected_case_ids"):
-        ComplianceReport(outcomes=(_outcome(), _outcome(mode="async")), expected_case_ids=(_outcome().case_id,))
+        ComplianceReport(outcomes=outcomes, expected_case_ids=(outcome.case_id,))
 
 
 def test_report_rejects_payload_missing_its_schema_version_key() -> None:

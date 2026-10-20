@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import StrEnum
 from types import MappingProxyType
 from typing import TYPE_CHECKING
@@ -205,21 +205,6 @@ class EffectiveCapabilityProfile:
             allowed=state not in remedies,
             remedy=remedies.get(state),
         )
-
-
-@dataclass(frozen=True, slots=True)
-class DriftAdvisory:
-    """Immutable advisory that never mutates a declared profile."""
-
-    profile_version: str
-    observed_fixture_fingerprint: str
-    message: str
-    advisory_only: bool = field(default=True, init=False)
-
-    def __post_init__(self) -> None:
-        _require_text("profile version", self.profile_version)
-        _require_text("observed fixture fingerprint", self.observed_fixture_fingerprint)
-        _require_text("drift message", self.message)
 
 
 def _effective_state(operation: OperationSpec, evidence: ProbeEvidence | None) -> EffectiveCapabilityState:

@@ -34,24 +34,14 @@ from datasluice.connectors.catalog.udata.models.harvest import (
     UDataJobHandle,
     bulk_plan,
 )
-from datasluice.connectors.catalog.udata.settlement import ASYNC_SETTLEMENT_ERRORS, SETTLEMENT_ERRORS
-from datasluice.connectors.catalog.udata.wire import harvest as wire
-from datasluice.domain.catalog.ids import CatalogId, ResourceKind
-from datasluice.domain.catalog.models import MappingRecord
-from datasluice.domain.catalog.receipts import BulkCheckpoint, MutationReceipt
-from datasluice.domain.catalog.safety import BulkExecutionPolicy, ConfirmationPolicy, MutationPolicy
-from datasluice.errors.catalog import BudgetExhaustedError, CatalogValidationError, NativeCatalogError
-from datasluice.runtime.bulk import AsyncBulkExecutor, BulkExecutor, BulkItemReceipt, BulkPlan, BulkSummary
-from datasluice.runtime.resilience import DeadlineMonitor
-
-from ._receipts import _error_status
-from .datasets import (
+from datasluice.connectors.catalog.udata.services._receipts import _error_status
+from datasluice.connectors.catalog.udata.services.datasets import (
     _enforce_mutation_policy,
     _require_mutation_permission,
 )
-from .jobs import _wait_step
-from .resources import _attach, _receipt
-from .taxonomies import (
+from datasluice.connectors.catalog.udata.services.jobs import _wait_step
+from datasluice.connectors.catalog.udata.services.resources import _attach, _receipt
+from datasluice.connectors.catalog.udata.services.taxonomies import (
     AsyncCatalogService,
     Permissions,
     Policy,
@@ -63,6 +53,15 @@ from .taxonomies import (
     _run_mutation,
     _run_mutation_async,
 )
+from datasluice.connectors.catalog.udata.settlement import ASYNC_SETTLEMENT_ERRORS, SETTLEMENT_ERRORS
+from datasluice.connectors.catalog.udata.wire import harvest as wire
+from datasluice.domain.catalog.ids import CatalogId, ResourceKind
+from datasluice.domain.catalog.models import MappingRecord
+from datasluice.domain.catalog.receipts import BulkCheckpoint, MutationReceipt
+from datasluice.domain.catalog.safety import BulkExecutionPolicy, ConfirmationPolicy, MutationPolicy
+from datasluice.errors.catalog import BudgetExhaustedError, CatalogValidationError, NativeCatalogError
+from datasluice.runtime.bulk import AsyncBulkExecutor, BulkExecutor, BulkItemReceipt, BulkPlan, BulkSummary
+from datasluice.runtime.resilience import DeadlineMonitor
 
 if TYPE_CHECKING:
     from threading import Event
@@ -275,6 +274,21 @@ async def _wait_for_job_async(
                 raise
             return HarvestJobWaitResult(handle=current.abandoned_lease(exhausted=True), record=record)
         current, record = observed, observed_record
+
+
+def _job_observation_request(handle: UDataJobHandle, monitor: DeadlineMonitor) -> Request | None:
+    if handle.job_id is None:
+        raise _wait_requirement()
+    try:
+        monitor.assert_dispatchable(HARVEST_OPERATION, PLATFORM)
+    except BudgetExhaustedError:
+        return None
+    return wire.get_job_request(handle.job_id)
+
+
+def _job_observation(handle: UDataJobHandle, response: Response) -> tuple[UDataJobHandle, MappingRecord]:
+    record = _parsed(response, HARVEST_OPERATION, wire.parse_record)
+    return handle.observed(wire.parse_job_status(record.payload, HARVEST_OPERATION)), record
 
 
 class SyncHarvestService(SyncCatalogService):
@@ -561,16 +575,10 @@ class SyncHarvestService(SyncCatalogService):
         self, handle: UDataJobHandle, permissions: Permissions, monitor: DeadlineMonitor
     ) -> tuple[UDataJobHandle, MappingRecord]:
         """Take one bounded observation of the queued job this handle names."""
-        job_id = handle.job_id
-        if job_id is None:
-            raise _wait_requirement()
-        try:
-            monitor.assert_dispatchable(HARVEST_OPERATION, PLATFORM)
-        except BudgetExhaustedError:
+        request = _job_observation_request(handle, monitor)
+        if request is None:
             return handle.abandoned_lease(exhausted=True), MappingRecord({"status": handle.status})
-        _, payload, _ = self._read_admin(wire.get_job_request(job_id), permissions, deadline=monitor)
-        record = wire.parse_record(payload, HARVEST_OPERATION)
-        return handle.observed(wire.parse_job_status(record.payload, HARVEST_OPERATION)), record
+        return _job_observation(handle, self._read_admin(request, permissions, deadline=monitor))
 
     def _read_admin(
         self, request: Request, permissions: Permissions, *, deadline: DeadlineMonitor | None = None
@@ -896,16 +904,10 @@ class AsyncHarvestService(AsyncCatalogService):
         self, handle: UDataJobHandle, permissions: Permissions, monitor: DeadlineMonitor
     ) -> tuple[UDataJobHandle, MappingRecord]:
         """Take one bounded observation of the queued job this handle names."""
-        job_id = handle.job_id
-        if job_id is None:
-            raise _wait_requirement()
-        try:
-            monitor.assert_dispatchable(HARVEST_OPERATION, PLATFORM)
-        except BudgetExhaustedError:
+        request = _job_observation_request(handle, monitor)
+        if request is None:
             return handle.abandoned_lease(exhausted=True), MappingRecord({"status": handle.status})
-        response = await self._read_admin(wire.get_job_request(job_id), permissions, deadline=monitor)
-        record = _parsed(response, HARVEST_OPERATION, wire.parse_record)
-        return handle.observed(wire.parse_job_status(record.payload, HARVEST_OPERATION)), record
+        return _job_observation(handle, await self._read_admin(request, permissions, deadline=monitor))
 
     async def _read_admin(
         self, request: Request, permissions: Permissions, *, deadline: DeadlineMonitor | None = None

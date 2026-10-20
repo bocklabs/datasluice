@@ -239,5 +239,7 @@ def test_document_formats_keep_the_http_limit(format_name, monkeypatch) -> None:
 
     monkeypatch.setattr(readers_base, "MAX_DOCUMENT_BYTES", 4)
     resource = Resource(id="large", url="https://catalog.example.test/data", format=format_name)
-    with SyncProbe(fixed(200, content=b'[{"id":1}]')) as transport, pytest.raises(TransportError, match="limit"):
-        DataPlaneResourceReader(transport).open(resource)
+    with SyncProbe(fixed(200, content=b'[{"id":1}]')) as transport:
+        reader = DataPlaneResourceReader(transport)
+        with pytest.raises(TransportError, match="limit"):
+            reader.open(resource)

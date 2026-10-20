@@ -145,6 +145,35 @@ def _freeze_mapping(value: Mapping[str, object], path: str) -> Mapping[str, obje
     return frozen
 
 
+def _query_filter_text(value: object, key: str) -> str:
+    return cast("str", value)
+
+
+def _query_params(
+    page: int,
+    page_size: int,
+    q: str | None,
+    sort: str | None,
+    filters: Mapping[str, object] | None,
+    *,
+    encode: Callable[[object, str], str] = _query_filter_text,
+    encode_repeated: Callable[[object, str], str] = _query_filter_text,
+) -> list[tuple[str, str]]:
+    params = [("page", str(page)), ("page_size", str(page_size))]
+    if q is not None:
+        params.append(("q", q))
+    if sort is not None:
+        params.append(("sort", sort))
+    for key, value in sorted((filters or {}).items()):
+        if isinstance(value, bool):
+            params.append((key, "true" if value else "false"))
+        elif isinstance(value, tuple):
+            params.extend((key, encode_repeated(item, key)) for item in value)
+        else:
+            params.append((key, encode(value, key)))
+    return params
+
+
 def _validate_text(value: object, field_name: str, *, allow_none: bool = False) -> None:
     if allow_none and value is None:
         return
@@ -461,16 +490,6 @@ class SiteProfile:
         return cast("Mapping[str, object]", value) if value is not None else None
 
     @property
-    def configs(self) -> Mapping[str, object] | None:
-        """Return the native site configuration mapping when present."""
-        return self._mapping_values("configs")
-
-    @property
-    def themes(self) -> Mapping[str, object] | None:
-        """Return the native site theme mapping when present."""
-        return self._mapping_values("themes")
-
-    @property
     def settings(self) -> Mapping[str, object] | None:
         """Return the native site settings mapping when present."""
         return self._mapping_values("settings")
@@ -479,29 +498,6 @@ class SiteProfile:
     def metrics(self) -> Mapping[str, object] | None:
         """Return the native site metrics mapping when present."""
         return self._mapping_values("metrics")
-
-    def _block_values(self, field_name: str) -> tuple[Mapping[str, object], ...] | None:
-        value = self.payload.get(field_name)
-        return (
-            tuple(cast("list[Mapping[str, object]] | tuple[Mapping[str, object], ...]", value))
-            if value is not None
-            else None
-        )
-
-    @property
-    def datasets_blocs(self) -> tuple[Mapping[str, object], ...] | None:
-        """Return the native dataset editorial blocks when present."""
-        return self._block_values("datasets_blocs")
-
-    @property
-    def reuses_blocs(self) -> tuple[Mapping[str, object], ...] | None:
-        """Return the native reuse editorial blocks when present."""
-        return self._block_values("reuses_blocs")
-
-    @property
-    def dataservices_blocs(self) -> tuple[Mapping[str, object], ...] | None:
-        """Return the native dataservice editorial blocks when present."""
-        return self._block_values("dataservices_blocs")
 
     @property
     def catalog_id(self) -> CatalogId:
@@ -667,19 +663,7 @@ class SiteDatasetCatalogQuery:
 
     def query_params(self) -> list[tuple[str, str]]:
         """Encode the pinned dataset-catalog parser fields in stable order."""
-        params = [("page", str(self.page)), ("page_size", str(self.page_size))]
-        if self.q is not None:
-            params.append(("q", self.q))
-        if self.sort is not None:
-            params.append(("sort", self.sort))
-        for key, value in sorted((self.filters or {}).items()):
-            if isinstance(value, bool):
-                params.append((key, "true" if value else "false"))
-            elif isinstance(value, tuple):
-                params.extend((key, item) for item in value)
-            else:
-                params.append((key, cast("str", value)))
-        return params
+        return _query_params(self.page, self.page_size, self.q, self.sort, self.filters)
 
 
 @dataclass(frozen=True, slots=True)
@@ -712,19 +696,7 @@ class SiteDatasetCsvQuery:
 
     def query_params(self) -> list[tuple[str, str]]:
         """Encode the pinned DatasetSearch parser fields in stable order."""
-        params = [("page", str(self.page)), ("page_size", str(self.page_size))]
-        if self.q is not None:
-            params.append(("q", self.q))
-        if self.sort is not None:
-            params.append(("sort", self.sort))
-        for key, value in sorted((self.filters or {}).items()):
-            if isinstance(value, bool):
-                params.append((key, "true" if value else "false"))
-            elif isinstance(value, tuple):
-                params.extend((key, item) for item in value)
-            else:
-                params.append((key, cast("str", value)))
-        return params
+        return _query_params(self.page, self.page_size, self.q, self.sort, self.filters)
 
 
 @dataclass(frozen=True, slots=True)
@@ -780,19 +752,7 @@ class SiteReuseCsvQuery:
 
     def query_params(self) -> list[tuple[str, str]]:
         """Encode the generated Reuse index parser fields in stable order."""
-        params = [("page", str(self.page)), ("page_size", str(self.page_size))]
-        if self.q is not None:
-            params.append(("q", self.q))
-        if self.sort is not None:
-            params.append(("sort", self.sort))
-        for key, value in sorted((self.filters or {}).items()):
-            if isinstance(value, tuple):
-                params.extend((key, item) for item in value)
-            elif isinstance(value, bool):
-                params.append((key, "true" if value else "false"))
-            else:
-                params.append((key, cast("str", value)))
-        return params
+        return _query_params(self.page, self.page_size, self.q, self.sort, self.filters)
 
 
 @dataclass(frozen=True, slots=True)
@@ -823,19 +783,7 @@ class SiteDataserviceCsvQuery:
 
     def query_params(self) -> list[tuple[str, str]]:
         """Encode the generated Dataservice index parser fields in stable order."""
-        params = [("page", str(self.page)), ("page_size", str(self.page_size))]
-        if self.q is not None:
-            params.append(("q", self.q))
-        if self.sort is not None:
-            params.append(("sort", self.sort))
-        for key, value in sorted((self.filters or {}).items()):
-            if isinstance(value, tuple):
-                params.extend((key, item) for item in value)
-            elif isinstance(value, bool):
-                params.append((key, "true" if value else "false"))
-            else:
-                params.append((key, cast("str", value)))
-        return params
+        return _query_params(self.page, self.page_size, self.q, self.sort, self.filters)
 
 
 def _require_optional_text(value: object, message: str) -> None:

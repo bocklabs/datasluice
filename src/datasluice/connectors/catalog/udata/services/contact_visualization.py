@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from functools import partial
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 from datasluice.connectors.catalog.udata.models.contact_visualization import (
     ContactPointCreateInput,
@@ -15,24 +15,20 @@ from datasluice.connectors.catalog.udata.models.contact_visualization import (
     VisualizationPage,
     VisualizationUpdateInput,
 )
-from datasluice.connectors.catalog.udata.settlement import ASYNC_SETTLEMENT_ERRORS, SETTLEMENT_ERRORS
-from datasluice.connectors.catalog.udata.wire import contact_visualization as wire
-from datasluice.domain.catalog.ids import ResourceKind
-from datasluice.errors.catalog import NativeCatalogError
-
-from .posts_reports import _record_id
-from .taxonomies import (
+from datasluice.connectors.catalog.udata.services.posts_reports import _record_id
+from datasluice.connectors.catalog.udata.services.taxonomies import (
     AsyncCatalogService,
     Permissions,
     Policy,
     Request,
-    Response,
-    SupportsUpload,
     SyncCatalogService,
-    _dataset_upload,
     _run_mutation,
     _run_mutation_async,
 )
+from datasluice.connectors.catalog.udata.settlement import ASYNC_SETTLEMENT_ERRORS, SETTLEMENT_ERRORS
+from datasluice.connectors.catalog.udata.wire import contact_visualization as wire
+from datasluice.domain.catalog.ids import ResourceKind
+from datasluice.errors.catalog import NativeCatalogError
 
 if TYPE_CHECKING:
     from datasluice.connectors.catalog.udata.clients import AsyncUDataClient, SyncUDataClient
@@ -230,18 +226,6 @@ class SyncContactVisualizationService(SyncCatalogService):
             wire.contact_point_roles_request(), wire.CONTACT_POINT_ROLES_OPERATION, wire.parse_contact_point_roles
         )
 
-    def _mutate_upload(self, request: Request, permissions: Permissions, policy: Policy, operation: str) -> Response:
-        method, path, headers, upload = request
-        return _dataset_upload(
-            self._client._dataset_call,
-            self._client._resolved_credential(),
-            permissions,
-            policy,
-            operation,
-            (method, path, headers),
-            cast("SupportsUpload", upload),
-        )
-
 
 class AsyncContactVisualizationService(AsyncCatalogService):
     """Typed asynchronous methods for the assigned contact-point and visualization family."""
@@ -396,18 +380,4 @@ class AsyncContactVisualizationService(AsyncCatalogService):
     async def contact_point_roles(self) -> tuple[MappingRecord, ...]:
         return await self._read(
             wire.contact_point_roles_request(), wire.CONTACT_POINT_ROLES_OPERATION, wire.parse_contact_point_roles
-        )
-
-    async def _mutate_upload(
-        self, request: Request, permissions: Permissions, policy: Policy, operation: str
-    ) -> Response:
-        method, path, headers, upload = request
-        return await _dataset_upload(
-            self._client._dataset_call_async,
-            await self._client._resolved_credential_async(),
-            permissions,
-            policy,
-            operation,
-            (method, path, headers),
-            cast("SupportsUpload", upload),
         )

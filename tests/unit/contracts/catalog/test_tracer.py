@@ -103,12 +103,15 @@ def test_unavailable_case_is_rejected_before_either_fake_dispatches() -> None:
 def test_missing_dataset_id_is_rejected_before_dispatch() -> None:
     sync_client = SyncReferenceConnector()
     async_client = AsyncReferenceConnector()
+    case = CatalogContractCase(operation_id="datasets.get")
+    typed_sync_client = cast("SyncCatalogClient", sync_client)
+    typed_async_client = cast("AsyncCatalogClient", async_client)
 
     with pytest.raises(ValueError, match="dataset ID"):
         run_catalog_contract(
-            CatalogContractCase(operation_id="datasets.get"),
-            sync_client=cast("SyncCatalogClient", sync_client),
-            async_client=cast("AsyncCatalogClient", async_client),
+            case,
+            sync_client=typed_sync_client,
+            async_client=typed_async_client,
         )
 
     assert sync_client.dispatches == []

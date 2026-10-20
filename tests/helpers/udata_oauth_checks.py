@@ -23,6 +23,21 @@ def oauth_mutation_policy(name: str) -> MutationPolicy:
     )
 
 
+def _assert_oauth_error_status(error: CatalogError, name: str, status_code: int) -> None:
+    assert error.metadata.get("status_code") == status_code, (name, error.metadata)
+    receipt = error.metadata.get("receipt")
+    assert isinstance(receipt, Mapping), name
+    assert receipt["audit_metadata"]["status_code"] == status_code, name
+
+
+def _assert_oauth_result_status(result: object, name: str, status_code: int) -> None:
+    if isinstance(result, OAuthConsentOutcome):
+        assert result.status_code == status_code, name
+    else:
+        assert isinstance(result, OAuthTokenResult), name
+        assert result.receipt.audit_metadata["status_code"] == status_code, name
+
+
 def assert_oauth_mutation_sync(
     client: SyncUDataClient,
     name: str,
@@ -38,16 +53,9 @@ def assert_oauth_mutation_sync(
     try:
         result = getattr(client.auth_oauth, name)(body, permissions, oauth_mutation_policy(name))
     except CatalogError as error:
-        assert error.metadata.get("status_code") == raw[0], (name, error.metadata)
-        receipt = error.metadata.get("receipt")
-        assert isinstance(receipt, Mapping), name
-        assert receipt["audit_metadata"]["status_code"] == raw[0], name
+        _assert_oauth_error_status(error, name, raw[0])
     else:
-        if isinstance(result, OAuthConsentOutcome):
-            assert result.status_code == raw[0], name
-        else:
-            assert isinstance(result, OAuthTokenResult), name
-            assert result.receipt.audit_metadata["status_code"] == raw[0], name
+        _assert_oauth_result_status(result, name, raw[0])
 
 
 async def assert_oauth_mutation_async(
@@ -61,13 +69,6 @@ async def assert_oauth_mutation_async(
     try:
         result = await getattr(client.auth_oauth, name)(body, permissions, oauth_mutation_policy(name))
     except CatalogError as error:
-        assert error.metadata.get("status_code") == raw[0], (name, error.metadata)
-        receipt = error.metadata.get("receipt")
-        assert isinstance(receipt, Mapping), name
-        assert receipt["audit_metadata"]["status_code"] == raw[0], name
+        _assert_oauth_error_status(error, name, raw[0])
     else:
-        if isinstance(result, OAuthConsentOutcome):
-            assert result.status_code == raw[0], name
-        else:
-            assert isinstance(result, OAuthTokenResult), name
-            assert result.receipt.audit_metadata["status_code"] == raw[0], name
+        _assert_oauth_result_status(result, name, raw[0])

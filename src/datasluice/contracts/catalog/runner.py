@@ -165,23 +165,15 @@ def _reference_case(case: CatalogContractCase, fixture_set: ReferenceFixtureSet)
 
 
 def _outcome(case: CatalogContractCase, metadata: Mapping[str, object], error: Exception | None = None) -> CaseOutcome:
-    if error is None:
-        return CaseOutcome(
-            operation_id=case.operation_id,
-            mode=case.mode,
-            capability="available" if case.outcome in SUCCESS_OUTCOMES else "unavailable",
-            state="passed",
-            tier=case.outcome,
-            warnings=(),
-            platform_metadata=metadata,
-        )
+    if isinstance(error, _EXPECTED_ERRORS.get(case.outcome, ())):
+        error = None
     return CaseOutcome(
         operation_id=case.operation_id,
         mode=case.mode,
         capability="available" if case.outcome in SUCCESS_OUTCOMES else "unavailable",
-        state="failed",
+        state="passed" if error is None else "failed",
         tier=case.outcome,
-        warnings=(case.pytest_id, str(error)[:256]),
+        warnings=() if error is None else (case.pytest_id, str(error)[:256]),
         platform_metadata=metadata,
     )
 
@@ -196,8 +188,6 @@ def _run_reference_sync_case(
         if case.outcome not in SUCCESS_OUTCOMES or not result.items:
             raise AssertionError("The connector accepted a case that must be rejected.")
     except Exception as error:
-        if isinstance(error, _EXPECTED_ERRORS.get(case.outcome, ())):
-            return _outcome(case, metadata)
         return _outcome(case, metadata, error)
     return _outcome(case, metadata)
 
@@ -212,8 +202,6 @@ async def _run_reference_async_case(
         if case.outcome not in SUCCESS_OUTCOMES or not result.items:
             raise AssertionError("The connector accepted a case that must be rejected.")
     except Exception as error:
-        if isinstance(error, _EXPECTED_ERRORS.get(case.outcome, ())):
-            return _outcome(case, metadata)
         return _outcome(case, metadata, error)
     return _outcome(case, metadata)
 

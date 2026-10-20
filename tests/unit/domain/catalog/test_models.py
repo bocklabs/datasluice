@@ -158,8 +158,9 @@ def test_catalog_id_rejects_malformed_versions_kinds_and_values(value: object) -
 def test_records_reject_invalid_extensions_and_json_values(value: object) -> None:
     record_id = CatalogId(CatalogPlatform.CKAN, ResourceKind.DATASET, "weather")
     # Runtime validation is the assertion; the rejected value reaches the constructor untyped.
+    extensions = cast("Mapping[str, object]", value)
     with pytest.raises(DataSluiceError):
-        DatasetRecord(id=record_id, name="Weather", extensions=cast("Mapping[str, object]", value))
+        DatasetRecord(id=record_id, name="Weather", extensions=extensions)
 
 
 def _credential_record() -> NativeRecord:

@@ -119,5 +119,6 @@ def test_native_page_evidence_excludes_private_pagination_and_deployment_metadat
     assert evidence["truncated"] is True
     assert "private" not in json.dumps(evidence)
     long_text = envelope.items[0].payload["long_text"]
-    assert isinstance(long_text, str) and len(long_text) == 256
+    assert isinstance(long_text, str)
+    assert len(long_text) == 256
     assert envelope.items[0].payload["title"] == "Private title"

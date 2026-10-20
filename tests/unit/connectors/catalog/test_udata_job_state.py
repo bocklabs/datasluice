@@ -118,9 +118,12 @@ def test_handle_observation_advances_polls_and_terminal_state() -> None:
     handle = _handle()
     assert handle.terminal is False
     started = handle.observed("STARTED")
-    assert started.polls == 1 and started.status == "STARTED" and started.terminal is False
+    assert started.polls == 1
+    assert started.status == "STARTED"
+    assert started.terminal is False
     done = started.observed("SUCCESS")
-    assert done.polls == 2 and done.terminal is True
+    assert done.polls == 2
+    assert done.terminal is True
 
 
 def test_handle_refuses_unknown_states_and_bad_lease_values() -> None:
@@ -140,9 +143,11 @@ def test_handle_refuses_unknown_states_and_bad_lease_values() -> None:
 def test_abandoned_lease_records_why_the_wait_stopped() -> None:
     """Abandonment keeps the remote work visible and never marks terminal success."""
     abandoned = _handle().abandoned_lease()
-    assert abandoned.abandoned is True and abandoned.exhausted is False
+    assert abandoned.abandoned is True
+    assert abandoned.exhausted is False
     exhausted = _handle().abandoned_lease(exhausted=True)
-    assert exhausted.abandoned is True and exhausted.exhausted is True
+    assert exhausted.abandoned is True
+    assert exhausted.exhausted is True
     assert abandoned.terminal is False
 
 
@@ -172,7 +177,8 @@ def test_sync_wait_stops_at_the_terminal_status_without_extra_polls() -> None:
     assert result.handle.status == "SUCCESS"
     assert result.handle.terminal is True
     assert result.handle.abandoned is False
-    assert result.record is not None and result.record.payload["id"] == "wheel-task"
+    assert result.record is not None
+    assert result.record.payload["id"] == "wheel-task"
     assert router.polls == 2
 
 
@@ -206,8 +212,9 @@ def test_sync_wait_cancellation_leaves_the_lease_stopped_and_post_state_ready() 
     """A cancelled observation propagates and the client stays usable."""
     router = CancellingRouter(["PENDING"])
     with sync_client(cast("SyncRouteRouter", router), UDATA_CREDENTIAL) as client:
+        handle = _handle(max_polls=4)
         with pytest.raises(asyncio.CancelledError):
-            client.worker_jobs.wait_for_task(_handle(max_polls=4), ADMIN)
+            client.worker_jobs.wait_for_task(handle, ADMIN)
         assert client.site_version().version == "17.6.0"
     assert router.closed == 1
 
@@ -274,11 +281,10 @@ def test_async_parallel_task_reads_preserve_results() -> None:
 def test_unknown_task_status_during_a_wait_fails_typed() -> None:
     """A deployment answering an undocumented status is a typed error, never a terminal state."""
     router = PollingRouter(["WHATEVER"])
-    with (
-        sync_client(cast("SyncRouteRouter", router), UDATA_CREDENTIAL) as client,
-        pytest.raises(CatalogValidationError),
-    ):
-        client.worker_jobs.wait_for_task(_handle(max_polls=4), ADMIN)
+    with sync_client(cast("SyncRouteRouter", router), UDATA_CREDENTIAL) as client:
+        handle = _handle(max_polls=4)
+        with pytest.raises(CatalogValidationError):
+            client.worker_jobs.wait_for_task(handle, ADMIN)
 
 
 def test_invalid_poll_interval_is_refused_before_any_dispatch() -> None:

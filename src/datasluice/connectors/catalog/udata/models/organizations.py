@@ -16,6 +16,7 @@ from datasluice.domain.catalog.models import (
     redact_record_payload,
 )
 from datasluice.domain.catalog.receipts import MutationReceipt
+from datasluice.domain.catalog.udata import _query_params
 from datasluice.exceptions import DataSluiceError
 
 _ROLES = frozenset({"admin", "editor", "partial_editor"})
@@ -106,19 +107,7 @@ class OrganizationListQuery:
             object.__setattr__(self, "filters", _frozen_mapping(self.filters, "filters"))
 
     def query_params(self) -> list[tuple[str, str]]:
-        params = [("page", str(self.page)), ("page_size", str(self.page_size))]
-        if self.q is not None:
-            params.append(("q", self.q))
-        if self.sort is not None:
-            params.append(("sort", self.sort))
-        for key, value in sorted((self.filters or {}).items()):
-            if isinstance(value, tuple):
-                params.extend((key, item) for item in value)
-            elif isinstance(value, bool):
-                params.append((key, "true" if value else "false"))
-            else:
-                params.append((key, value))
-        return params
+        return _query_params(self.page, self.page_size, self.q, self.sort, self.filters)
 
 
 @dataclass(frozen=True, slots=True)

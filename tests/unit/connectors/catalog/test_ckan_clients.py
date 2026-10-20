@@ -679,8 +679,9 @@ def test_abandoned_half_open_trial_allows_the_next_dispatch(asynchronous: bool) 
             declared_ckan_profile(),
             CKANClientSettings(base_url=LOOPBACK_ORIGIN, breakers=breakers, probe_policy="declared-baseline"),
         )
+        coroutine = client.datasets.package_show(id="abc-123")
         with pytest.raises(asyncio.CancelledError):
-            asyncio.run(client.datasets.package_show(id="abc-123"))
+            asyncio.run(coroutine)
         assert asyncio.run(client.datasets.package_show(id="abc-123")).items
     else:
         sync_transport = SyncInterrupted(body=success_body(PACKAGE_RESULT))
@@ -708,8 +709,9 @@ def test_refreshed_credential_can_recover_after_unauthorized_response(asynchrono
     if asynchronous:
         transport = AsyncCaptureTransport(status_code=401)
         client = AsyncCKANClient(transport, declared_ckan_profile(), settings)
+        coroutine = client.datasets.package_show(id="abc-123")
         with pytest.raises(UnauthenticatedError):
-            asyncio.run(client.datasets.package_show(id="abc-123"))
+            asyncio.run(coroutine)
         rotated = True
         transport.status_code, transport.body = 200, success_body(PACKAGE_RESULT)
         assert asyncio.run(client.datasets.package_show(id="abc-123")).items
@@ -746,10 +748,9 @@ def test_invalid_json_params_are_rejected_before_dispatch(params: dict[str, obje
     operation = CatalogOperationRequest(
         operation_id=operation_id, payload={"action": "current_package_list_with_resources", **params}
     )
+    guard = CatalogOperationGuard(operation_id=operation_id, profile=client._profile)
     with pytest.raises(CatalogValidationError):
-        client.datasets.list_show_search(
-            operation, CatalogOperationGuard(operation_id=operation_id, profile=client._profile)
-        )
+        client.datasets.list_show_search(operation, guard)
     assert transport.requests == []
 
 

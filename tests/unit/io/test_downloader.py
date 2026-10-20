@@ -29,9 +29,11 @@ def test_downloader_rejects_dns_answers_with_private_addresses(tmp_path: Path, m
     ]
     monkeypatch.setattr(socket, "getaddrinfo", lambda *args, **kwargs: answers)
     transport = _Transport(RuntimeResponse(200, {}, b"private"))
+    downloader = Downloader(transport)
+    resource = _resource()
 
     with pytest.raises(DownloadError, match="locality"):
-        Downloader(transport).download(_resource(), tmp_path)
+        downloader.download(resource, tmp_path)
 
     assert transport.requests == []
 
@@ -103,16 +105,20 @@ def test_downloader_rejects_private_redirect_before_dispatch(tmp_path: Path) -> 
     from tests.helpers.httpx_probe import SyncProbe, at_host, redirect_to
 
     responder = redirect_to("http://169.254.169.254/credentials", 302, at_host("catalog.example.test"))
-    with SyncProbe(responder) as transport, pytest.raises(DownloadError, match="locality"):
-        Downloader(transport).download(_resource(), tmp_path)
+    resource = _resource()
+    with SyncProbe(responder) as transport:
+        downloader = Downloader(transport)
+        with pytest.raises(DownloadError, match="locality"):
+            downloader.download(resource, tmp_path)
     assert len(transport.requests) == 1
 
 
 def test_downloader_private_target_requires_explicit_allowance(tmp_path: Path) -> None:
     transport = _Transport(RuntimeResponse(200, {}, b"local"))
     resource = _resource("http://127.0.0.1/data")
+    downloader = Downloader(transport)
     with pytest.raises(DownloadError, match="locality"):
-        Downloader(transport).download(resource, tmp_path)
+        downloader.download(resource, tmp_path)
     assert transport.requests == []
     assert Downloader(transport, allow_private_http=True).download(resource, tmp_path).read_bytes() == b"local"
 
@@ -163,7 +169,8 @@ def test_bad_cached_checksum_evicts_the_poisoned_entry(tmp_path: Path) -> None:
     transport = _Transport(RuntimeResponse(200, {}, b"good"))
     resource = _resource()
     digest = hashlib.sha256(b"good").hexdigest()
+    downloader = Downloader(transport, cache=cache)
     with pytest.raises(ChecksumMismatchError):
-        Downloader(transport, cache=cache).download(resource, tmp_path, verify_hash=digest)
+        downloader.download(resource, tmp_path, verify_hash=digest)
     assert cache.get(resource.url or "") is None
     assert transport.requests == []

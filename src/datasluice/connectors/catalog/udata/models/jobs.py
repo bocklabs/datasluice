@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 
 from datasluice.connectors.catalog.udata.models._cron import CRON_FIELD, CRON_WEEKDAY_FIELD, MAX_CRON_FIELD
+from datasluice.connectors.catalog.udata.models._jobs import _validate_lease, _validate_wait_result
 from datasluice.connectors.catalog.udata.models._segment import path_segment
 from datasluice.domain.catalog.ids import ResourceKind
 from datasluice.domain.catalog.models import MappingRecord, _freeze_json, _thaw_json
@@ -24,8 +25,6 @@ WORKER_TERMINAL_TASK_STATES = frozenset({"SUCCESS", "FAILURE", "REVOKED"})
 WORKER_EXCEPTION_TASK_STATES = frozenset({"RETRY", "FAILURE", "REVOKED"})
 
 _MAX_TEXT = 255
-_MAX_POLLS = 1024
-_MAX_POLL_INTERVAL = 300.0
 _MAX_ARGS = 64
 
 
@@ -173,17 +172,10 @@ class UDataJobHandle:
             raise ValueError("uData job handles require a non-empty task identifier.")
         if self.status not in WORKER_TASK_STATES:
             raise ValueError(f"uData job handle status must be one of {sorted(WORKER_TASK_STATES)}.")
-        if not isinstance(self.budget, TimeBudget):
-            raise ValueError("uData job handle wait budgets must use TimeBudget.")
-        if type(self.poll_interval) not in (int, float) or not 0 <= float(self.poll_interval) <= _MAX_POLL_INTERVAL:
-            raise ValueError(f"uData job handle poll intervals must be between 0 and {_MAX_POLL_INTERVAL} seconds.")
-        object.__setattr__(self, "poll_interval", float(self.poll_interval))
-        if type(self.max_polls) is not int or not 1 <= self.max_polls <= _MAX_POLLS:
-            raise ValueError(f"uData job handle poll ceilings must be an integer from 1 through {_MAX_POLLS}.")
-        if type(self.polls) is not int or self.polls < 0:
-            raise ValueError("uData job handle poll counts must be a non-negative integer.")
-        if not all(type(state) is bool for state in (self.exhausted, self.abandoned)):
-            raise ValueError("uData job handle lease state must use booleans.")
+        interval = _validate_lease(
+            self.budget, self.poll_interval, self.max_polls, self.polls, self.exhausted, self.abandoned
+        )
+        object.__setattr__(self, "poll_interval", interval)
 
     @property
     def terminal(self) -> bool:
@@ -253,10 +245,7 @@ class WorkerTaskWaitResult:
     record: MappingRecord | None = None
 
     def __post_init__(self) -> None:
-        if not isinstance(self.handle, UDataJobHandle):
-            raise ValueError("uData job wait results require a typed job handle.")
-        if self.record is not None and not isinstance(self.record, MappingRecord):
-            raise ValueError("uData job wait result records require a mapping record.")
+        _validate_wait_result(self.handle, self.record, UDataJobHandle)
 
     def to_dict(self) -> dict[str, object]:
         """Return the wait outcome as a JSON-safe projection."""

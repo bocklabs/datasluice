@@ -194,8 +194,9 @@ def test_sync_wait_cancellation_leaves_the_lease_stopped_and_post_state_ready() 
     """A cancelled observation propagates and the client stays usable."""
     router = CancellingRouter(["processing"])
     with sync_client(cast("SyncRouteRouter", router), UDATA_CREDENTIAL) as client:
+        handle = _handle(max_polls=4)
         with pytest.raises(asyncio.CancelledError):
-            client.harvest_moderation_admin.wait_for_job(_handle(max_polls=4), PERMISSIONS)
+            client.harvest_moderation_admin.wait_for_job(handle, PERMISSIONS)
         assert client.site_version().version == "17.6.0"
     assert router.closed == 1
 

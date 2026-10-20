@@ -2308,12 +2308,13 @@ def _site_document() -> SiteDocument:
 
 
 def test_site_document_rejects_non_string_digests_and_formats() -> None:
+    document = _site_document()
     with pytest.raises(ValueError, match="SHA-256"):
-        replace(_site_document(), sha256=123)  # type: ignore[arg-type]
+        replace(document, sha256=123)  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="formats"):
-        replace(_site_document(), format="")
+        replace(document, format="")
     with pytest.raises(ValueError, match="formats"):
-        replace(_site_document(), format=7)  # type: ignore[arg-type]
+        replace(document, format=7)  # type: ignore[arg-type]
 
 
 def test_site_patch_validation_paths_name_the_patch_input() -> None:

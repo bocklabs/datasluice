@@ -250,8 +250,9 @@ def test_sync_tracer_interruption_respects_transport_ownership(owns_transport: b
     client = SyncUDataClient(
         transport, declared_udata_profile(), origin="http://127.0.0.1:5640", owns_transport=owns_transport
     )
-    with pytest.raises(KeyboardInterrupt), client:
-        client.datasets_list(*_datasets_operation())
+    operation = _datasets_operation()
+    with client, pytest.raises(KeyboardInterrupt):
+        client.datasets_list(*operation)
     client.close()
     assert transport.close_count == int(owns_transport)
 
@@ -277,11 +278,11 @@ def test_async_tracer_cancellation_drains_transport_work(owns_transport: bool, c
         client = AsyncUDataClient(
             transport, declared_udata_profile(), origin="http://127.0.0.1:5640", owns_transport=owns_transport
         )
-        with pytest.raises(asyncio.CancelledError):
-            async with client:
-                task = asyncio.create_task(client.datasets_list(*_datasets_operation()))
-                await asyncio.wait_for(started.wait(), timeout=1)
-                task.cancel()
+        async with client:
+            task = asyncio.create_task(client.datasets_list(*_datasets_operation()))
+            await asyncio.wait_for(started.wait(), timeout=1)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
                 await task
         await client.aclose()
         assert finished.is_set()

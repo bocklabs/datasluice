@@ -11,6 +11,27 @@ from datasluice.connectors.catalog.udata.models.resources import (
     ResourceUpdateInput,
     ResourceUploadInput,
 )
+from datasluice.connectors.catalog.udata.services._receipts import (
+    FailureReceipt,
+    ResultShaper,
+    _error_status,
+    _mutation_outcome,
+    _operation_id,
+    _receipt_policy,
+    _run_receipted_mutation,
+    _run_receipted_mutation_async,
+)
+from datasluice.connectors.catalog.udata.services._receipts import (
+    _attach_receipt as _attach,
+)
+from datasluice.connectors.catalog.udata.services._receipts import (
+    _close_input as _close_upload,
+)
+from datasluice.connectors.catalog.udata.services.datasets import (
+    _enforce_mutation_policy,
+    _require_mutation_permission,
+    _safe_target_value,
+)
 from datasluice.connectors.catalog.udata.settlement import ASYNC_SETTLEMENT_ERRORS, SETTLEMENT_ERRORS
 from datasluice.connectors.catalog.udata.wire import datasets as dataset_wire
 from datasluice.connectors.catalog.udata.wire import resources as wire
@@ -23,28 +44,6 @@ from datasluice.errors.catalog import (
     NativeCatalogError,
 )
 from datasluice.runtime.mutation import build_mutation_receipt
-
-from ._receipts import (
-    FailureReceipt,
-    ResultShaper,
-    _error_status,
-    _mutation_outcome,
-    _operation_id,
-    _receipt_policy,
-    _run_receipted_mutation,
-    _run_receipted_mutation_async,
-)
-from ._receipts import (
-    _attach_receipt as _attach,
-)
-from ._receipts import (
-    _close_input as _close_upload,
-)
-from .datasets import (
-    _enforce_mutation_policy,
-    _require_mutation_permission,
-    _safe_target_value,
-)
 
 if TYPE_CHECKING:
     from datasluice.connectors.catalog.udata.clients import AsyncUDataClient, SyncUDataClient

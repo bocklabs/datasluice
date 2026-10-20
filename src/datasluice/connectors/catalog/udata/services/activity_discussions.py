@@ -13,12 +13,7 @@ from datasluice.connectors.catalog.udata.models.activity_discussions import (
     DiscussionSearchQuery,
     DiscussionUpdateInput,
 )
-from datasluice.connectors.catalog.udata.settlement import ASYNC_SETTLEMENT_ERRORS, SETTLEMENT_ERRORS
-from datasluice.connectors.catalog.udata.wire import activity_discussions as wire
-from datasluice.domain.catalog.ids import ResourceKind
-from datasluice.errors.catalog import NativeCatalogError
-
-from .taxonomies import (
+from datasluice.connectors.catalog.udata.services.taxonomies import (
     AsyncCatalogService,
     Permissions,
     Policy,
@@ -26,6 +21,10 @@ from .taxonomies import (
     _run_mutation,
     _run_mutation_async,
 )
+from datasluice.connectors.catalog.udata.settlement import ASYNC_SETTLEMENT_ERRORS, SETTLEMENT_ERRORS
+from datasluice.connectors.catalog.udata.wire import activity_discussions as wire
+from datasluice.domain.catalog.ids import ResourceKind
+from datasluice.errors.catalog import NativeCatalogError
 
 if TYPE_CHECKING:
     from datasluice.connectors.catalog.udata.clients import AsyncUDataClient, SyncUDataClient

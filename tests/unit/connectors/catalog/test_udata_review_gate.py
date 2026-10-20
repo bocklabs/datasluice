@@ -44,10 +44,11 @@ def _capture(
     created_at: str = "2026-08-26T00:00:00Z",
     post_fix: bool = False,
     parent_receipt: str | None = None,
+    source_content: str = "# Independent review\n\nNo unresolved findings.\n",
 ) -> Path:
     source = tmp_path / "source-review-input.md"
     threads = tmp_path / "thread-input.json"
-    source.write_text("# Independent review\n\nNo unresolved findings.\n", encoding="utf-8")
+    source.write_text(source_content, encoding="utf-8")
     threads.write_text(json.dumps(_threads(reviewed_sha=reviewed_sha)), encoding="utf-8")
     return review_gate.capture_review(
         reviews_root=tmp_path / "reviews",
@@ -119,98 +120,32 @@ def test_verify_rejects_current_unfixed_or_unclassified_finding(tmp_path: Path, 
 
 
 def test_capture_rejects_secret_shaped_review_content(tmp_path: Path) -> None:
-    source = tmp_path / "source.md"
-    threads = tmp_path / "threads.json"
-    source.write_text("Authorization: Bearer definitely-secret", encoding="utf-8")
-    threads.write_text(json.dumps(_threads()), encoding="utf-8")
-
     with pytest.raises(review_gate.ReviewGateError, match="sensitive"):
-        review_gate.capture_review(
-            reviews_root=tmp_path / "reviews",
-            family="tracer",
-            reviewed_sha=HEAD,
-            base_sha=BASE,
-            reviewer_id="reviewer-2",
-            author_ids=("author-1",),
-            source_review=source,
-            current_threads=threads,
-            created_at="2026-08-26T00:00:00Z",
-            parent_receipt=None,
-            post_fix=False,
-        )
+        _capture(tmp_path, source_content="Authorization: Bearer definitely-secret")
 
 
 def test_capture_rejects_unredacted_raw_response_content(tmp_path: Path) -> None:
-    source = tmp_path / "source.md"
-    threads = tmp_path / "threads.json"
-    source.write_text("raw_response: retained", encoding="utf-8")
-    threads.write_text(json.dumps(_threads()), encoding="utf-8")
-
     with pytest.raises(review_gate.ReviewGateError, match="sensitive"):
-        review_gate.capture_review(
-            reviews_root=tmp_path / "reviews",
-            family="tracer",
-            reviewed_sha=HEAD,
-            base_sha=BASE,
-            reviewer_id="reviewer-2",
-            author_ids=("author-1",),
-            source_review=source,
-            current_threads=threads,
-            created_at="2026-08-26T00:00:00Z",
-            parent_receipt=None,
-            post_fix=False,
-        )
+        _capture(tmp_path, source_content="raw_response: retained")
 
 
 def test_capture_rejects_json_exported_credentials(tmp_path: Path) -> None:
-    source = tmp_path / "source.md"
-    threads = tmp_path / "threads.json"
     sample = "abcdefgh" + "12345678"
     key_field = "api_" + "key"
-    source.write_text(
-        f'"{key_field}": "{sample}",\n"authorization": "Bearer {sample}"\n',
-        encoding="utf-8",
-    )
-    threads.write_text(json.dumps(_threads()), encoding="utf-8")
-
     with pytest.raises(review_gate.ReviewGateError, match="sensitive"):
-        review_gate.capture_review(
-            reviews_root=tmp_path / "reviews",
-            family="tracer",
-            reviewed_sha=HEAD,
-            base_sha=BASE,
-            reviewer_id="reviewer-2",
-            author_ids=("author-1",),
-            source_review=source,
-            current_threads=threads,
-            created_at="2026-08-26T00:00:00Z",
-            parent_receipt=None,
-            post_fix=False,
+        _capture(
+            tmp_path,
+            source_content=f'"{key_field}": "{sample}",\n"authorization": "Bearer {sample}"\n',
         )
 
 
 def test_capture_accepts_security_prose_without_credentials(tmp_path: Path) -> None:
-    source = tmp_path / "source.md"
-    source.write_text(
-        "Bearer tokens must not be leaked on redirect, so strip the Authorization: header.\n"
-        "The authorization check must run before I/O, and `assert 'X-API-KEY' not in headers` pins it.\n",
-        encoding="utf-8",
-    )
-    threads = tmp_path / "threads.json"
-    threads.write_text(json.dumps(_threads()), encoding="utf-8")
-
-    directory = review_gate.capture_review(
-        reviews_root=tmp_path / "reviews",
-        family="tracer",
-        reviewed_sha=HEAD,
-        base_sha=BASE,
-        reviewer_id="reviewer-2",
-        author_ids=("author-1",),
-        source_review=source,
-        current_threads=threads,
-        created_at="2026-08-26T00:00:00Z",
-        parent_receipt=None,
-        post_fix=False,
+    directory = _capture(
+        tmp_path,
+        source_content=(
+            "Bearer tokens must not be leaked on redirect, so strip the Authorization: header.\n"
+            "The authorization check must run before I/O, and `assert 'X-API-KEY' not in headers` pins it.\n"
+        ),
     )
 
     assert review_gate.verify_review(tmp_path / "reviews", "tracer", HEAD)["status"] == "passed"
@@ -235,46 +170,12 @@ def test_capture_accepts_security_prose_without_credentials(tmp_path: Path) -> N
     ],
 )
 def test_capture_rejects_private_origin_urls(tmp_path: Path, private_url: str) -> None:
-    source = tmp_path / "source.md"
-    threads = tmp_path / "threads.json"
-    source.write_text(f"evidence endpoint: {private_url}\n", encoding="utf-8")
-    threads.write_text(json.dumps(_threads()), encoding="utf-8")
-
     with pytest.raises(review_gate.ReviewGateError, match="private origin"):
-        review_gate.capture_review(
-            reviews_root=tmp_path / "reviews",
-            family="tracer",
-            reviewed_sha=HEAD,
-            base_sha=BASE,
-            reviewer_id="reviewer-2",
-            author_ids=("author-1",),
-            source_review=source,
-            current_threads=threads,
-            created_at="2026-08-26T00:00:00Z",
-            parent_receipt=None,
-            post_fix=False,
-        )
+        _capture(tmp_path, source_content=f"evidence endpoint: {private_url}\n")
 
 
 def test_capture_accepts_public_https_origins(tmp_path: Path) -> None:
-    source = tmp_path / "source.md"
-    threads = tmp_path / "threads.json"
-    source.write_text("evidence endpoint: https://www.data.gouv.fr/api/1/site/\n", encoding="utf-8")
-    threads.write_text(json.dumps(_threads()), encoding="utf-8")
-
-    directory = review_gate.capture_review(
-        reviews_root=tmp_path / "reviews",
-        family="tracer",
-        reviewed_sha=HEAD,
-        base_sha=BASE,
-        reviewer_id="reviewer-2",
-        author_ids=("author-1",),
-        source_review=source,
-        current_threads=threads,
-        created_at="2026-08-26T00:00:00Z",
-        parent_receipt=None,
-        post_fix=False,
-    )
+    directory = _capture(tmp_path, source_content="evidence endpoint: https://www.data.gouv.fr/api/1/site/\n")
 
     assert directory.is_dir()
 

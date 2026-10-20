@@ -38,7 +38,8 @@ def test_sync_outcome_record_is_not_tuple_compatible(tmp_path, csv_server, make_
         _ = cast("tuple[object, ...]", record)[0]
 
 
-def test_corrupt_destination_rematerializes(tmp_path, csv_server, make_resource) -> None:
+@pytest.mark.parametrize("damage", ["corrupt", "missing"])
+def test_unhealthy_destination_rematerializes(tmp_path, csv_server, make_resource, damage: str) -> None:
     _server, url = csv_server()
     resource = make_resource(url)
     transport = HttpxCatalogTransport()
@@ -52,38 +53,20 @@ def test_corrupt_destination_rematerializes(tmp_path, csv_server, make_resource)
         record = first[0].record
         assert record is not None
         expected_bytes = fs.cat_file(record.uri)
-        fs.pipe_file(record.uri, b"foreign destination bytes")
-        second = _sync(tmp_path, resource, store, transport)
-
-    assert second[0].action == "materialized"
-    second_record = second[0].record
-    assert second_record is not None
-    assert fs.cat_file(second_record.uri) == expected_bytes
-    state = store.get(canonical_identity(resource))
-    assert state is not None
-    assert state.cursor[canonical_identity(resource)] == second_record.content_digest.value
-
-
-def test_missing_destination_rematerializes(tmp_path, csv_server, make_resource) -> None:
-    _server, url = csv_server()
-    resource = make_resource(url)
-    transport = HttpxCatalogTransport()
-    store = InMemoryStateStore()
-    destination = f"file://{tmp_path}/dest"
-
-    with patch("datasluice.io.filesystem.open_filesystem") as open_fs:
-        fs = open_filesystem(destination)
-        open_fs.return_value = fs
-        first = _sync(tmp_path, resource, store, transport)
-        record = first[0].record
-        assert record is not None
-        fs.rm(record.uri)
+        if damage == "corrupt":
+            fs.pipe_file(record.uri, b"foreign destination bytes")
+        else:
+            fs.rm(record.uri)
         second = _sync(tmp_path, resource, store, transport)
 
     assert second[0].action == "materialized"
     second_record = second[0].record
     assert second_record is not None
     assert fs.exists(second_record.uri)
+    assert fs.cat_file(second_record.uri) == expected_bytes
+    state = store.get(canonical_identity(resource))
+    assert state is not None
+    assert state.cursor[canonical_identity(resource)] == second_record.content_digest.value
 
 
 def test_healthy_destination_zero_write_remains(tmp_path, csv_server, make_resource) -> None:

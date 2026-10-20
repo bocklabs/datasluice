@@ -126,11 +126,12 @@ def test_mapping_record_freezes_its_interior_and_rejects_non_object_payloads() -
 
     record = MappingRecord(payload={"nested": {"key": "value"}})
     assert isinstance(record.payload, MappingProxyType)
+    nested = cast("dict[str, str]", record.payload["nested"])
     with pytest.raises(TypeError):
-        nested = cast("dict[str, str]", record.payload["nested"])
         nested["key"] = "mutated"
+    invalid_payload = cast("dict[str, Any]", {"payload": [1, 2, 3]})
     with pytest.raises(DataSluiceError):
-        MappingRecord(**cast("dict[str, Any]", {"payload": [1, 2, 3]}))
+        MappingRecord(**invalid_payload)
 
 
 def test_result_envelope_accepts_value_and_mapping_records_as_first_class_items() -> None:
@@ -191,6 +192,7 @@ def test_probe_evidence_constructs_with_historical_five_arguments_and_defaults_p
 
 def test_probe_evidence_rejects_unknown_provenance_values() -> None:
     operation_id = OperationId(platform="ckan", service="action-api-v3", method="status")
+    invalid_provenance = cast("dict[str, Any]", {"provenance": "bogus"})
     with pytest.raises(ValueError):
         ProbeEvidence(
             operation_id=operation_id,
@@ -198,7 +200,7 @@ def test_probe_evidence_rejects_unknown_provenance_values() -> None:
             credential_classification=CredentialClassification.ANONYMOUS,
             role_classification=RoleClassification.ANONYMOUS,
             observed_response_class=ProbeResponseClass.SUCCESS,
-            **cast("dict[str, Any]", {"provenance": "bogus"}),
+            **invalid_provenance,
         )
 
 

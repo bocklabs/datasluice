@@ -5,12 +5,13 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, ClassVar, Literal
 
 from datasluice.connectors.catalog.udata.models._segment import paging, path_segment
-from datasluice.domain.catalog.models import MappingRecord, _freeze_json, _thaw_json
+from datasluice.connectors.catalog.udata.models._shared import FollowerQuery, freeze_mapping, validated_filters
+from datasluice.domain.catalog.models import MappingRecord, _thaw_json
 from datasluice.domain.catalog.patches import UNSET, UnsetType
-from datasluice.exceptions import DataSluiceError
+from datasluice.domain.catalog.udata import _query_params as _catalog_query_params
 
 if TYPE_CHECKING:
     from datasluice.domain.catalog.receipts import MutationReceipt
@@ -50,45 +51,6 @@ def segment(value: str, operation: str) -> str:
     return path_segment(value, operation, "uData dataservice")
 
 
-def _validated_filters(
-    filters: Mapping[str, str | bool | tuple[str, ...]] | None,
-    *,
-    query: str,
-    documented: frozenset[str] | tuple[str, ...],
-    boolean: frozenset[str] | tuple[str, ...],
-) -> None:
-    if filters is None:
-        return
-    if not isinstance(filters, Mapping):
-        raise ValueError(f"uData dataservice {query} filters must be a mapping.")
-    unknown = set(filters) - set(documented)
-    if unknown:
-        raise ValueError(f"uData dataservice {query} filters are not documented choices: {sorted(unknown)}.")
-    for key, value in filters.items():
-        if not _is_filter_value(value):
-            raise ValueError(
-                f"uData dataservice {query} filter {key!r} must be a string, boolean, or tuple of non-empty strings."
-            )
-        if key in boolean and type(value) is not bool:
-            raise ValueError(f"uData dataservice {query} filter {key!r} must be a boolean.")
-
-
-def _is_filter_value(value: object) -> bool:
-    return isinstance(value, (str, bool)) or (
-        type(value) is tuple and all(isinstance(item, str) and item for item in value)
-    )
-
-
-def _frozen_mapping(value: Mapping[str, object], label: str) -> Mapping[str, object]:
-    try:
-        frozen = _freeze_json(dict(value), f"udata.{label}")
-    except DataSluiceError as error:
-        raise ValueError(f"uData {label} must contain JSON-safe values only.") from error
-    if not isinstance(frozen, Mapping):
-        raise ValueError(f"uData {label} must be a mapping when supplied.")
-    return frozen
-
-
 def _query_params(
     page: int,
     page_size: int,
@@ -96,19 +58,7 @@ def _query_params(
     sort: str | None,
     filters: Mapping[str, object] | None,
 ) -> list[tuple[str, str]]:
-    params: list[tuple[str, str]] = [("page", str(page)), ("page_size", str(page_size))]
-    if q is not None:
-        params.append(("q", q))
-    if sort is not None:
-        params.append(("sort", sort))
-    for key, value in sorted((filters or {}).items()):
-        if isinstance(value, bool):
-            params.append((key, "true" if value else "false"))
-        elif isinstance(value, tuple):
-            params.extend((key, item) for item in value)
-        else:
-            params.append((key, cast_str(value)))
-    return params
+    return _catalog_query_params(page, page_size, q, sort, filters, encode=lambda value, key: cast_str(value))
 
 
 def cast_str(value: object) -> str:
@@ -137,14 +87,15 @@ class DataserviceListQuery:
         if self.sort is not None and self.sort not in _LIST_SORT_CHOICES:
             raise ValueError("uData dataservice list sort is not a documented choice.")
         _optional_text(self.q, "list q")
-        _validated_filters(
+        validated_filters(
             self.filters,
+            subject="dataservice",
             query="list",
             documented=frozenset(_LIST_FILTERS),
             boolean=frozenset(_LIST_BOOLEAN_FILTERS),
         )
         if self.filters is not None:
-            object.__setattr__(self, "filters", _frozen_mapping(self.filters, "dataservice list filters"))
+            object.__setattr__(self, "filters", freeze_mapping(self.filters, "dataservice list filters"))
 
     def query_params(self) -> list[tuple[str, str]]:
         return _query_params(self.page, self.page_size, self.q, self.sort, self.filters)
@@ -165,37 +116,26 @@ class DataserviceSearchQuery:
         if self.sort is not None and self.sort not in _SEARCH_SORT_CHOICES:
             raise ValueError("uData dataservice search sort is not a documented choice.")
         _optional_text(self.q, "search q")
-        _validated_filters(
+        validated_filters(
             self.filters,
+            subject="dataservice",
             query="search",
             documented=frozenset(_SEARCH_FILTERS),
             boolean=frozenset(_SEARCH_BOOLEAN_FILTERS),
         )
         if self.filters is not None:
-            object.__setattr__(self, "filters", _frozen_mapping(self.filters, "dataservice search filters"))
+            object.__setattr__(self, "filters", freeze_mapping(self.filters, "dataservice search filters"))
 
     def query_params(self) -> list[tuple[str, str]]:
         return _query_params(self.page, self.page_size, self.q, self.sort, self.filters)
 
 
 @dataclass(frozen=True, slots=True)
-class DataserviceFollowersQuery:
+class DataserviceFollowersQuery(FollowerQuery):
     """Stock follower query: pagination plus the optional user filter."""
 
-    page: int = 1
-    page_size: int = 20
-    user: str | None = None
-
-    def __post_init__(self) -> None:
-        paging(self.page, self.page_size, "follower")
-        if self.user is not None and (not isinstance(self.user, str) or not self.user):
-            raise ValueError("uData dataservice follower user must be a non-empty string when supplied.")
-
-    def query_params(self) -> list[tuple[str, str]]:
-        params = [("page", str(self.page)), ("page_size", str(self.page_size))]
-        if self.user is not None:
-            params.append(("user", self.user))
-        return params
+    _paging_label: ClassVar[str] = "follower"
+    _user_subject: ClassVar[str] = "dataservice"
 
 
 @dataclass(frozen=True, slots=True)
@@ -338,7 +278,7 @@ def _frozen_nested(instance: DataserviceCreateInput | DataserviceUpdateInput, la
     for label in labels:
         value = getattr(instance, label)
         if value is not UNSET and value is not None and (label == "extras" or isinstance(value, Mapping)):
-            object.__setattr__(instance, label, _frozen_mapping(cast_mapping(value), f"dataservice {label}"))
+            object.__setattr__(instance, label, freeze_mapping(cast_mapping(value), f"dataservice {label}"))
 
 
 def _frozen_contact_points(instance: DataserviceCreateInput | DataserviceUpdateInput) -> None:
@@ -354,7 +294,7 @@ def _frozen_contact_points(instance: DataserviceCreateInput | DataserviceUpdateI
         instance,
         "contact_points",
         tuple(
-            _frozen_mapping(point, "dataservice contact point") if isinstance(point, Mapping) else point
+            freeze_mapping(point, "dataservice contact point") if isinstance(point, Mapping) else point
             for point in points
         ),
     )
@@ -379,7 +319,7 @@ def _frozen_access_audiences(instance: DataserviceCreateInput | DataserviceUpdat
             raise ValueError("uData dataservice access audience choices must be stock and roles distinct.")
         roles.add(role)
     object.__setattr__(
-        instance, "access_audiences", tuple(_frozen_mapping(item, "access audience") for item in audiences)
+        instance, "access_audiences", tuple(freeze_mapping(item, "access audience") for item in audiences)
     )
 
 

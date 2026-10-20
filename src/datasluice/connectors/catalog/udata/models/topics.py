@@ -5,13 +5,13 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import cast
 
 from datasluice.connectors.catalog.udata.models._segment import paging, path_segment
+from datasluice.connectors.catalog.udata.models._shared import freeze_mapping, validated_filters
 from datasluice.connectors.catalog.udata.models.reuses import linked_identifier
-from datasluice.domain.catalog.models import MappingRecord, _freeze_json, _thaw_json
+from datasluice.domain.catalog.models import MappingRecord, _thaw_json
 from datasluice.domain.catalog.receipts import MutationReceipt
-from datasluice.exceptions import DataSluiceError
+from datasluice.domain.catalog.udata import _query_params as _catalog_query_params
 
 _DEFAULT_PAGE_SIZE = 20
 _TOPIC_SORTS = ("name", "created", "last_modified")
@@ -59,45 +59,6 @@ def _optional_text(value: object, label: str, *, required: bool = False) -> None
         raise ValueError(f"uData topic {label} must be a string when supplied.")
 
 
-def _is_filter_value(value: object) -> bool:
-    return isinstance(value, (str, bool)) or (
-        type(value) is tuple and all(isinstance(item, str) and item for item in value)
-    )
-
-
-def _validated_filters(
-    filters: Mapping[str, str | bool | tuple[str, ...]] | None,
-    *,
-    query: str,
-    documented: frozenset[str] | tuple[str, ...],
-    boolean: frozenset[str] | tuple[str, ...],
-) -> None:
-    if filters is None:
-        return
-    if not isinstance(filters, Mapping):
-        raise ValueError(f"uData topic {query} filters must be a mapping.")
-    unknown = set(filters) - set(documented)
-    if unknown:
-        raise ValueError(f"uData topic {query} filters are not documented choices: {sorted(unknown)}.")
-    for key, value in filters.items():
-        if not _is_filter_value(value):
-            raise ValueError(
-                f"uData topic {query} filter {key!r} must be a string, boolean, or tuple of non-empty strings."
-            )
-        if key in boolean and type(value) is not bool:
-            raise ValueError(f"uData topic {query} filter {key!r} must be a boolean.")
-
-
-def _frozen_mapping(value: Mapping[str, object], label: str) -> Mapping[str, object]:
-    if not isinstance(value, Mapping):
-        raise ValueError(f"uData {label} must be a mapping when supplied.")
-    try:
-        frozen = _freeze_json(dict(value), f"udata.{label}")
-    except DataSluiceError as error:
-        raise ValueError(f"uData {label} must contain JSON-safe values only.") from error
-    return cast("Mapping[str, object]", frozen)
-
-
 def _query_params(
     page: int,
     page_size: int,
@@ -105,19 +66,7 @@ def _query_params(
     sort: str | None,
     filters: Mapping[str, object] | None,
 ) -> list[tuple[str, str]]:
-    params: list[tuple[str, str]] = [("page", str(page)), ("page_size", str(page_size))]
-    if q is not None:
-        params.append(("q", q))
-    if sort is not None:
-        params.append(("sort", sort))
-    for key, value in sorted((filters or {}).items()):
-        if isinstance(value, bool):
-            params.append((key, "true" if value else "false"))
-        elif isinstance(value, tuple):
-            params.extend((key, item) for item in value)
-        else:
-            params.append((key, str(value)))
-    return params
+    return _catalog_query_params(page, page_size, q, sort, filters, encode=lambda value, key: str(value))
 
 
 def _validated_sort(value: object, label: str) -> None:
@@ -168,14 +117,15 @@ class TopicListQuery:
         paging(self.page, self.page_size, "uData topic list")
         _validated_sort(self.sort, "list")
         _optional_text(self.q, "list q")
-        _validated_filters(
+        validated_filters(
             self.filters,
+            subject="topic",
             query="list",
             documented=frozenset(_TOPIC_LIST_FILTERS),
             boolean=_TOPIC_LIST_BOOLEAN_FILTERS,
         )
         if self.filters is not None:
-            object.__setattr__(self, "filters", _frozen_mapping(self.filters, "topic list filters"))
+            object.__setattr__(self, "filters", freeze_mapping(self.filters, "topic list filters"))
 
     def query_params(self) -> list[tuple[str, str]]:
         return _query_params(self.page, self.page_size, self.q, self.sort, self.filters)
@@ -195,8 +145,9 @@ class TopicSearchQuery:
         paging(self.page, self.page_size, "uData topic search")
         _validated_sort(self.sort, "search")
         _optional_text(self.q, "search q")
-        _validated_filters(
+        validated_filters(
             self.filters,
+            subject="topic",
             query="search",
             documented=frozenset(_TOPIC_SEARCH_FILTERS),
             boolean=_TOPIC_SEARCH_BOOLEAN_FILTERS,
@@ -212,7 +163,7 @@ class TopicSearchQuery:
                 not isinstance(producer_type, str) or producer_type not in _TOPIC_SEARCH_PRODUCER_TYPES
             ):
                 raise ValueError("uData topic search producer_type must be a documented producer type.")
-            object.__setattr__(self, "filters", _frozen_mapping(self.filters, "topic search filters"))
+            object.__setattr__(self, "filters", freeze_mapping(self.filters, "topic search filters"))
 
     def query_params(self) -> list[tuple[str, str]]:
         return _query_params(self.page, self.page_size, self.q, self.sort, self.filters)
@@ -291,7 +242,7 @@ class TopicElementInput:
         ):
             raise ValueError("uData topic element tags must be a tuple of non-empty strings when supplied.")
         if self.extras is not None:
-            object.__setattr__(self, "extras", _frozen_mapping(self.extras, "topic element extras"))
+            object.__setattr__(self, "extras", freeze_mapping(self.extras, "topic element extras"))
         if self.element is not None:
             operation = "udata/api-v2.topic-element"
             object.__setattr__(self, "element", _element_reference(self.element, operation))
@@ -374,7 +325,7 @@ class TopicCreateInput:
         for label in ("extras", "organization", "owner", "spatial"):
             value = getattr(self, label)
             if value is not None:
-                object.__setattr__(self, label, _frozen_mapping(value, f"topic {label}"))
+                object.__setattr__(self, label, freeze_mapping(value, f"topic {label}"))
         if isinstance(self.elements, tuple) and len(self.elements) > 100:
             raise ValueError(_ELEMENTS_LIMIT_MESSAGE)
         if not isinstance(self.elements, tuple) or not all(
@@ -433,7 +384,7 @@ class TopicUpdateInput:
         for label in ("extras", "organization", "owner", "spatial"):
             value = getattr(self, label)
             if value is not None:
-                object.__setattr__(self, label, _frozen_mapping(value, f"topic {label}"))
+                object.__setattr__(self, label, freeze_mapping(value, f"topic {label}"))
         _validated_update_elements(self.elements)
         _elements_carry_a_title_or_link(self.elements)
 

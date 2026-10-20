@@ -451,19 +451,15 @@ def test_non_finite_decoding_fails_typed_without_raw_body() -> None:
         b'{"version": "17.6.0", "id": "site", "title": "uData", "feed_size": 0, '
         b'"keywords": [], "metrics": {"widgets": NaN}}'
     )
-    with (
-        pytest.raises(NativeCatalogError) as raised,
-        sync_client(
-            sync_route_table(
-                {
-                    ("GET", f"{ORIGIN}/api/1/site/"): (200, nan_site),
-                    ("GET", f"{ORIGIN}/api/1/activity/"): (200, nan_site),
-                }
-            ),
-            None,
-        ) as client,
-    ):
-        client.activity_discussions.activity(ActivityQuery())
+    with sync_client(
+        sync_route_table(
+            {("GET", f"{ORIGIN}/api/1/site/"): (200, nan_site), ("GET", f"{ORIGIN}/api/1/activity/"): (200, nan_site)}
+        ),
+        None,
+    ) as client:
+        query = ActivityQuery()
+        with pytest.raises(NativeCatalogError) as raised:
+            client.activity_discussions.activity(query)
     assert "NaN" not in repr(raised.value) + str(raised.value.__dict__)
 
 
@@ -488,12 +484,9 @@ def test_cancelled_discussion_mutation_records_a_cancelled_receipt(monkeypatch: 
     async def run_async() -> None:
         async with async_client(async_route_table(with_site_route({})), UDATA_CREDENTIAL) as client:
             monkeypatch.setattr(client, "_dataset_call_async", cancel_async)
+            policy = _policy(wire.DELETE_DISCUSSION_OPERATION, "discussion-1")
             with pytest.raises(asyncio.CancelledError) as cancelled:
-                await client.activity_discussions.delete_discussion(
-                    "discussion-1",
-                    PERMISSIONS,
-                    _policy(wire.DELETE_DISCUSSION_OPERATION, "discussion-1"),
-                )
+                await client.activity_discussions.delete_discussion("discussion-1", PERMISSIONS, policy)
             receipt = cancelled.value.__dict__["mutation_receipt"]
             assert receipt.outcome == "cancelled"
             assert receipt.operation == wire.DELETE_DISCUSSION_OPERATION
@@ -507,12 +500,9 @@ def test_interrupted_discussion_mutation_is_not_misreported_as_failed(monkeypatc
     def interrupt(**kwargs: object) -> tuple[int, object, object]:
         raise KeyboardInterrupt
 
-    with (
-        pytest.raises(KeyboardInterrupt) as stopped,
-        sync_client(sync_route_table(with_site_route({})), UDATA_CREDENTIAL) as client,
-    ):
+    with sync_client(sync_route_table(with_site_route({})), UDATA_CREDENTIAL) as client:
         monkeypatch.setattr(client, "_dataset_call", interrupt)
-        client.activity_discussions.delete_discussion(
-            "discussion-1", PERMISSIONS, _policy(wire.DELETE_DISCUSSION_OPERATION, "discussion-1")
-        )
+        policy = _policy(wire.DELETE_DISCUSSION_OPERATION, "discussion-1")
+        with pytest.raises(KeyboardInterrupt) as stopped:
+            client.activity_discussions.delete_discussion("discussion-1", PERMISSIONS, policy)
     assert stopped.value.__dict__["mutation_receipt"].outcome == "cancelled"

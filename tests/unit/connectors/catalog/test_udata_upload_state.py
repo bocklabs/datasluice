@@ -82,70 +82,49 @@ class _CloseFailingSource(BytesIO):
         super().close()
 
 
-def test_mid_stream_deadline_exceeded_is_ambiguous_like_any_other_os_error() -> None:
-    """A deadline exhaustion is an OSError, so it settles ambiguously like the byte ceiling.
+def _interrupt_upload() -> tuple[OSError, BytesIO, _InterruptingTransport]:
+    credential = UDataCredential(api_key="local-test-key")
+    permissions = EffectivePermissions.for_credential(credential, platform=CatalogPlatform.UDATA)
+    transport = _InterruptingTransport()
+    source = BytesIO(b"abc")
+    client = SyncUDataClient(
+        transport,
+        declared_udata_profile(),
+        origin="http://127.0.0.1:5640",
+        credentials=credential,
+        owns_transport=False,
+    )
+    policy = MutationPolicy(
+        confirmation=ConfirmationPolicy(
+            confirmed=True,
+            operation=wire.UPLOAD_NEW_OPERATION,
+            target="dataset",
+        ),
+        concurrency=ConcurrencyPolicy(overwrite=True),
+    )
 
-    ``MidStreamUploadError`` and ``UploadDeadlineExceededError`` both subclass ``OSError``, so the settlement check must
-    test the base class. Narrowing it to the connector-local subclass would silently downgrade a bare transport
-    ``OSError`` to ``failed`` after dispatch, which claims the target is unchanged when bytes may already be on the
-    wire.
-    """
+    upload = ResourceUploadInput(source, "data.csv", 3)
+    with client, pytest.raises(OSError) as raised:
+        client.resources.upload("dataset", upload, permissions, policy)
+
+    return raised.value, source, transport
+
+
+def test_mid_stream_deadline_exceeded_is_ambiguous_like_any_other_os_error() -> None:
+    """OSError after dispatch is ambiguous, including upload deadline and byte-limit errors."""
     assert issubclass(MidStreamUploadError, OSError)
     assert issubclass(UploadDeadlineExceededError, MidStreamUploadError)
 
-    credential = UDataCredential(api_key="local-test-key")
-    permissions = EffectivePermissions.for_credential(credential, platform=CatalogPlatform.UDATA)
-    transport = _InterruptingTransport()
-    source = BytesIO(b"abc")
-    client = SyncUDataClient(
-        transport,
-        declared_udata_profile(),
-        origin="http://127.0.0.1:5640",
-        credentials=credential,
-        owns_transport=False,
-    )
-    policy = MutationPolicy(
-        confirmation=ConfirmationPolicy(
-            confirmed=True,
-            operation=wire.UPLOAD_NEW_OPERATION,
-            target="dataset",
-        ),
-        concurrency=ConcurrencyPolicy(overwrite=True),
-    )
-
-    with client, pytest.raises(OSError) as raised:
-        client.resources.upload("dataset", ResourceUploadInput(source, "data.csv", 3), permissions, policy)
-
-    assert raised.value.__dict__["mutation_receipt"].outcome == "ambiguous"
+    error, _source, _transport = _interrupt_upload()
+    assert error.__dict__["mutation_receipt"].outcome == "ambiguous"
 
 
 def test_mid_stream_failure_is_ambiguous_and_closes_borrowed_source() -> None:
-    credential = UDataCredential(api_key="local-test-key")
-    permissions = EffectivePermissions.for_credential(credential, platform=CatalogPlatform.UDATA)
-    transport = _InterruptingTransport()
-    source = BytesIO(b"abc")
-    client = SyncUDataClient(
-        transport,
-        declared_udata_profile(),
-        origin="http://127.0.0.1:5640",
-        credentials=credential,
-        owns_transport=False,
-    )
-    policy = MutationPolicy(
-        confirmation=ConfirmationPolicy(
-            confirmed=True,
-            operation=wire.UPLOAD_NEW_OPERATION,
-            target="dataset",
-        ),
-        concurrency=ConcurrencyPolicy(overwrite=True),
-    )
-
-    with client, pytest.raises(OSError) as raised:
-        client.resources.upload("dataset", ResourceUploadInput(source, "data.csv", 3), permissions, policy)
+    error, source, transport = _interrupt_upload()
 
     assert source.closed
     assert transport.close_count == 0
-    assert raised.value.__dict__["mutation_receipt"].outcome == "ambiguous"
+    assert error.__dict__["mutation_receipt"].outcome == "ambiguous"
 
 
 def test_upload_policy_rejection_closes_source_without_dispatch() -> None:
@@ -161,8 +140,9 @@ def test_upload_policy_rejection_closes_source_without_dispatch() -> None:
         owns_transport=False,
     )
 
+    upload = ResourceUploadInput(source, "data.csv", 3)
     with client, pytest.raises(ForbiddenError) as raised:
-        client.resources.upload("dataset", ResourceUploadInput(source, "data.csv", 3), permissions)
+        client.resources.upload("dataset", upload, permissions)
 
     assert source.closed
     assert transport.close_count == 0
@@ -186,10 +166,11 @@ def test_invalid_upload_id_closes_source_and_attaches_rejection_receipt() -> Non
         destructive=True,
     )
 
+    upload = ResourceUploadInput(source, "data.csv", 3)
     with client, pytest.raises(CatalogValidationError) as raised:
         client.resources.upload(
             "dataset",
-            ResourceUploadInput(source, "data.csv", 3),
+            upload,
             permissions,
             policy,
             resource_id="resource/id",
@@ -222,10 +203,9 @@ def test_async_invalid_community_upload_id_keeps_route_receipt_identity() -> Non
 
     async def run() -> CatalogValidationError:
         async with client:
+            upload = ResourceUploadInput(source, "data.csv", 3)
             with pytest.raises(CatalogValidationError) as raised:
-                await client.resources.reupload_community(
-                    "resource/id", ResourceUploadInput(source, "data.csv", 3), permissions, policy
-                )
+                await client.resources.reupload_community("resource/id", upload, permissions, policy)
         return raised.value
 
     error = asyncio.run(run())
@@ -244,10 +224,11 @@ def test_upload_close_failure_preserves_the_primary_rejection_receipt() -> None:
         owns_transport=False,
     )
 
+    upload = ResourceUploadInput(_CloseFailingSource(b"abc"), "data.csv", 3)
     with client, pytest.raises(ForbiddenError) as raised:
         client.resources.upload(
             "dataset",
-            ResourceUploadInput(_CloseFailingSource(b"abc"), "data.csv", 3),
+            upload,
             permissions,
         )
 
@@ -285,12 +266,14 @@ def test_upload_malformed_2xx_is_ambiguous_and_307_is_not_replayed() -> None:
         owns_transport=False,
     )
     with client:
+        malformed_upload = ResourceUploadInput(BytesIO(b"abc"), "data.csv", 3)
         with pytest.raises(NativeCatalogError) as raised:
-            client.resources.upload("dataset", ResourceUploadInput(BytesIO(b"abc"), "data.csv", 3), permissions, policy)
+            client.resources.upload("dataset", malformed_upload, permissions, policy)
+        redirected_upload = ResourceUploadInput(BytesIO(b"abc"), "data.csv", 3)
         with pytest.raises(CatalogValidationError) as redirected:
             client.resources.upload(
                 "dataset",
-                ResourceUploadInput(BytesIO(b"abc"), "data.csv", 3),
+                redirected_upload,
                 permissions,
                 policy,
             )
@@ -322,10 +305,9 @@ def test_async_upload_cancellation_closes_source_and_records_cancelled() -> None
 
     async def run() -> BaseException:
         async with client:
+            upload = ResourceUploadInput(source, "data.csv", 3)
             with pytest.raises(asyncio.CancelledError) as raised:
-                await client.resources.upload(
-                    "dataset", ResourceUploadInput(source, "data.csv", 3), permissions, policy
-                )
+                await client.resources.upload("dataset", upload, permissions, policy)
         return raised.value
 
     error = asyncio.run(run())
@@ -360,13 +342,15 @@ def test_retry_opted_in_upload_is_attempted_once_because_the_stream_is_one_shot(
     )
     upload = ResourceUploadInput(BytesIO(b"abc"), "data.csv", 3)
 
+    idempotency_policy = IdempotencyPolicy(explicit_retry_opt_in=True)
+    files = (upload.part(),)
     with client, pytest.raises(TransportError):
         client._dataset_call(
             method="POST",
             path="/api/1/datasets/dataset/upload/",
             owning_operation=wire.UPLOAD_NEW_OPERATION,
-            idempotency_policy=IdempotencyPolicy(explicit_retry_opt_in=True),
-            files=(upload.part(),),
+            idempotency_policy=idempotency_policy,
+            files=files,
         )
 
     upload.close()
@@ -400,13 +384,15 @@ def test_async_retry_opted_in_upload_is_attempted_once_because_the_stream_is_one
 
     async def run() -> None:
         async with client:
+            idempotency_policy = IdempotencyPolicy(explicit_retry_opt_in=True)
+            files = (upload.part(),)
             with pytest.raises(TransportError):
                 await client._dataset_call_async(
                     method="POST",
                     path="/api/1/datasets/dataset/upload/",
                     owning_operation=wire.UPLOAD_NEW_OPERATION,
-                    idempotency_policy=IdempotencyPolicy(explicit_retry_opt_in=True),
-                    files=(upload.part(),),
+                    idempotency_policy=idempotency_policy,
+                    files=files,
                 )
 
     asyncio.run(run())
@@ -518,10 +504,14 @@ def _budget(total: float) -> TimeBudget:
 
 
 def test_upload_input_rejects_an_untyped_budget_and_a_non_callable_clock() -> None:
+    source = BytesIO(b"a")
+    invalid_budget = cast("Any", object())
     with pytest.raises(TypeError, match="uData upload time budgets must use TimeBudget"):
-        ResourceUploadInput(BytesIO(b"a"), "data.csv", 1, budget=cast("Any", object()))
+        ResourceUploadInput(source, "data.csv", 1, budget=invalid_budget)
+    source = BytesIO(b"a")
+    invalid_clock = cast("Any", "now")
     with pytest.raises(TypeError, match="uData upload sources require a monotonic clock callable"):
-        ResourceUploadInput(BytesIO(b"a"), "data.csv", 1, clock=cast("Any", "now"))
+        ResourceUploadInput(source, "data.csv", 1, clock=invalid_clock)
 
 
 def test_upload_source_exactly_at_its_byte_ceiling_streams_every_byte_and_reports_end_of_file() -> None:
@@ -542,9 +532,9 @@ def test_upload_source_over_its_byte_ceiling_fails_on_bytes_and_not_on_the_deadl
     source = _TickingSource(b"abcd", clock, 0.25)
     upload = ResourceUploadInput(source, "data.csv", 3, budget=_budget(4.0), clock=clock)
 
+    part = upload.part()
+    assert not isinstance(part.data, bytes)
     with pytest.raises(MidStreamUploadError, match="byte limit") as raised:
-        part = upload.part()
-        assert not isinstance(part.data, bytes)
         while part.data.read():
             pass
 
@@ -560,9 +550,9 @@ def test_streaming_deadline_takes_precedence_over_the_byte_ceiling_once_it_is_ex
     upload = ResourceUploadInput(source, "data.csv", 3, budget=_budget(1.0), clock=clock)
     clock.advance(10.0)
 
+    part = upload.part()
+    assert not isinstance(part.data, bytes)
     with pytest.raises(UploadDeadlineExceededError) as raised:
-        part = upload.part()
-        assert not isinstance(part.data, bytes)
         while part.data.read():
             pass
 
@@ -590,12 +580,14 @@ def test_streaming_deadline_stops_a_slow_drip_that_stays_under_the_byte_ceiling(
         owns_transport=False,
     )
 
+    upload = ResourceUploadInput(source, "data.csv", 64, budget=_budget(2.0), clock=clock)
+    policy = _upload_policy()
     with client, pytest.raises(UploadDeadlineExceededError) as raised:
         client.resources.upload(
             "dataset",
-            ResourceUploadInput(source, "data.csv", 64, budget=_budget(2.0), clock=clock),
+            upload,
             permissions,
-            _upload_policy(),
+            policy,
             resource_id="resource",
         )
 
@@ -623,12 +615,14 @@ def test_streaming_deadline_rejects_an_eof_read_that_finishes_after_the_budget()
         owns_transport=False,
     )
 
+    upload = ResourceUploadInput(source, "data.csv", 4, budget=_budget(4.5), clock=clock)
+    policy = _upload_policy()
     with client, pytest.raises(UploadDeadlineExceededError) as raised:
         client.resources.upload(
             "dataset",
-            ResourceUploadInput(source, "data.csv", 4, budget=_budget(4.5), clock=clock),
+            upload,
             permissions,
-            _upload_policy(),
+            policy,
             resource_id="resource",
         )
 
@@ -644,9 +638,9 @@ def test_streaming_deadline_fails_the_end_of_stream_probe_once_the_budget_is_exh
     source = _TickingSource(b"abcd", clock, 1.0)
     upload = ResourceUploadInput(source, "data.csv", 4, budget=_budget(3.5), clock=clock)
 
+    part = upload.part()
+    assert not isinstance(part.data, bytes)
     with pytest.raises(UploadDeadlineExceededError) as raised:
-        part = upload.part()
-        assert not isinstance(part.data, bytes)
         while part.data.read():
             pass
 
@@ -662,12 +656,12 @@ def test_streaming_deadline_failure_still_closes_the_borrowed_source_exactly_onc
     upload = ResourceUploadInput(source, "data.csv", 3, budget=_budget(1.0), clock=clock)
     clock.advance(10.0)
 
-    data: UploadStream | None = None
+    data: UploadStream | None
+    part = upload.part()
+    candidate = part.data
+    assert not isinstance(candidate, bytes)
+    data = candidate
     with pytest.raises(UploadDeadlineExceededError):
-        part = upload.part()
-        candidate = part.data
-        assert not isinstance(candidate, bytes)
-        data = candidate
         data.read()
 
     upload.close()
@@ -696,12 +690,14 @@ def test_async_cancellation_mid_drip_closes_once_and_is_not_reported_as_the_dead
 
     async def run() -> asyncio.CancelledError:
         async with client:
+            upload = ResourceUploadInput(source, "data.csv", 64, budget=_budget(30.0), clock=clock)
+            policy = _upload_policy()
             with pytest.raises(asyncio.CancelledError) as raised:
                 await client.resources.upload(
                     "dataset",
-                    ResourceUploadInput(source, "data.csv", 64, budget=_budget(30.0), clock=clock),
+                    upload,
                     permissions,
-                    _upload_policy(),
+                    policy,
                     resource_id="resource",
                 )
         return raised.value

@@ -38,11 +38,6 @@ jobs:
         with:
           node-version: 24
 
-      - name: Configure OCR
-        env:
-          OCR_VERSION: '1.12.11'
-        run: npx -y "@alibaba-group/open-code-review@${OCR_VERSION}" config set max_tokens 131072
-
       - name: Run OpenCodeReview
         uses: alibaba/open-code-review@fabbdb296b0d97e2140ada8d54ca7d6d6d1d7ad4 # v1.12.13
         with:
@@ -50,7 +45,8 @@ jobs:
           llm_auth_token: ${{ secrets.OCR_LLM_AUTH_TOKEN }}
           llm_model: ${{ secrets.OCR_LLM_MODEL }}
           llm_use_anthropic: ${{ secrets.OCR_LLM_USE_ANTHROPIC }}
-          llm_extra_body: '{"reasoning_effort": "max", "max_tokens": 131072}'
+          llm_reasoning_effort: max
+          max_tokens_budget: '1000000'
           review_concurrency: '4'
           language: 'English'
           github_token: ${{ secrets.GITHUB_TOKEN }}
