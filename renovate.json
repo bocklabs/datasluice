@@ -43,6 +43,11 @@
       "matchFileNames": ["providers/apache-airflow/pyproject.toml"],
       "matchPackageNames": ["datasluice"],
       "enabled": false
+    },
+    {
+      "description": "Vendored upstream manifests under dev/ are frozen evidence for the local connector stacks; updates would desync them from the tracked upstream projects.",
+      "matchFileNames": ["dev/**"],
+      "enabled": false
     }
   ]
 }
