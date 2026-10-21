@@ -852,7 +852,9 @@ class AsyncHarvestService(AsyncCatalogService):
             clock=clock,
             cancel_event=cancel_event,
         )
-        entries = [entry async for entry in executor.stream(plan)]
+        entries: list[BulkItemReceipt | BulkSummary] = []
+        async for entry in executor.stream(plan):
+            entries.append(entry)
         return _bulk_result(action, plan, tuple(entries), recorded, checkpoint)
 
     async def _bulk_item(
