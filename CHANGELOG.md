@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.2](https://github.com/bocklabs/datasluice/compare/datasluice-v0.4.1...datasluice-v0.4.2) (2026-10-21)
+
+
+### Bug Fixes
+
+* disable updates for vendored upstream manifests in dev ([#97](https://github.com/bocklabs/datasluice/issues/97)) ([0024420](https://github.com/bocklabs/datasluice/commit/0024420eba61e9e5dd48de5acc6cb60f909b76b4))
+
 ## [0.4.1](https://github.com/bocklabs/datasluice/compare/datasluice-v0.4.0...datasluice-v0.4.1) (2026-10-21)
 
 
