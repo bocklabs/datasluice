@@ -221,7 +221,9 @@ def _rdf_redirect_receipt(
         status_code=status_code,
         mutation="rdf_redirect",
     )
-    return replace(receipt, target=replace(receipt.target, resource_kind=ResourceKind(subject)))
+    return cast(
+        "MutationReceipt", replace(receipt, target=replace(receipt.target, resource_kind=ResourceKind(subject)))
+    )
 
 
 def _redirect_receipt(
