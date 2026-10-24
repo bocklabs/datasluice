@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.3](https://github.com/bocklabs/datasluice/compare/datasluice-v0.4.2...datasluice-v0.4.3) (2026-10-24)
+
+
+### Bug Fixes
+
+* improve outcome handling in CKAN and udata clients ([#104](https://github.com/bocklabs/datasluice/issues/104)) ([f6a3942](https://github.com/bocklabs/datasluice/commit/f6a3942f645440478b2e7b777daf00f95ee78943))
+
 ## [0.4.2](https://github.com/bocklabs/datasluice/compare/datasluice-v0.4.1...datasluice-v0.4.2) (2026-10-21)
 
 
