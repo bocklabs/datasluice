@@ -130,6 +130,8 @@ def _assert_token_material_absent(result, minted, label):
 
 def _site_response(transport, url, method):
     """Return the stub for a site, account, or API token route."""
+    if url.endswith("/api/1/swagger.json"):
+        return _json({"swagger": "2.0", "basePath": "/api/1", "paths": {"/datasets/": {"get": {}}}})
     if url.endswith("/api/1/site/"):
         return _json(
             {
@@ -513,7 +515,7 @@ def _jobs_response(url, method):
 
 
 class Transport:
-    def __init__(self, version="17.6.0"):
+    def __init__(self, version="17.16.0"):
         self.requests = []
         self.close_count = 0
         self.version = version
@@ -587,6 +589,8 @@ class Transport:
     def send(self, request):
         url = request.url
         self.requests.append(url)
+        if url.endswith("/swagger.json"):
+            assert not request.headers
         body, headers = self._route(request)
         status = 204 if request.method == "DELETE" else 201 if request.method == "POST" else 200
         if url.partition("?")[0].endswith("/api/2/topics/wheel-topic/featured/"):
@@ -625,7 +629,7 @@ def main() -> None:
     client = create_sync_client(
         UDataClientSettings(base_url="http://127.0.0.1:5640", sync_transport=transport, credential=sync_credential)
     )
-    assert client.site_version().version == "17.6.0"
+    assert client.site_version().version == "17.16.0"
     assert client.dataservices.get_dataservice("wheel-dataservice").payload["id"] == "wheel-dataservice"
     root_profile = client.root_profile.get()
     assert root_profile.id == "s"
@@ -1627,7 +1631,7 @@ def main() -> None:
     assert organization_created.receipt.operation == "udata/api-v1.create-organization"
     assert organization_created.receipt.outcome == "succeeded"
     assert organization_created.receipt.audit_metadata["status_code"] == 201
-    recorded = [getattr(r, "url", r) for r in transport.requests]
+    recorded = [getattr(r, "url", r) for r in transport.requests if not str(r).endswith("/swagger.json")]
     expected = [
         "http://127.0.0.1:5640/api/1/site/",
         "http://127.0.0.1:5640/api/1/dataservices/wheel-dataservice/",
@@ -1734,7 +1738,7 @@ def main() -> None:
         "http://127.0.0.1:5640/api/1/reuses/wheel-reuse/",
     ]
     assert recorded == expected
-    async_recorded = [getattr(r, "url", r) for r in async_transport.requests]
+    async_recorded = [getattr(r, "url", r) for r in async_transport.requests if not str(r).endswith("/swagger.json")]
     async_expected = [
         # one entry per dispatch, duplicates preserved (/api/1/me/api_tokens/ is listed then created)
         "http://127.0.0.1:5640/api/1/access_type/reason_categories/",
@@ -1821,7 +1825,7 @@ def main() -> None:
         raise AssertionError("malformed installed-wheel response was accepted")
     malformed.close()
 
-    blocked_transport = Transport(version="17.7")
+    blocked_transport = Transport(version="18.0.0")
     blocked = create_sync_client(
         UDataClientSettings(base_url="http://127.0.0.1:5640", sync_transport=blocked_transport)
     )

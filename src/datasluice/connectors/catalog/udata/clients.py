@@ -15,6 +15,7 @@ from time import monotonic, sleep
 from typing import TYPE_CHECKING, ClassVar, Self, TypedDict, Unpack, cast
 from urllib.parse import urlsplit
 
+from datasluice.connectors.catalog.udata.compatibility import UDataRouteGate
 from datasluice.connectors.catalog.udata.mapping import (
     _DATASETS_OPERATION_ID,
     _PAGED_PATH,
@@ -1390,12 +1391,11 @@ class _UDataClientCore(metaclass=_ImmutableClientType):
             clock=clock,
         )
         self._profile = self._capabilities.baseline_profile
-        pinned = self._profile.declared_profile.profile_version
+        self._route_gate = UDataRouteGate(self._origin, transport, settings.capability_cache_ttl, clock)
         if site_gate is not None:
             self._site_gate: SiteVersionGate | AsyncSiteVersionGate = site_gate
         elif not async_gate:
             self._site_gate = SiteVersionGate(
-                pinned_version=pinned,
                 origin=self._origin,
                 transport=cast("CatalogTransport", transport),
                 ttl_seconds=settings.capability_cache_ttl,
@@ -1403,7 +1403,6 @@ class _UDataClientCore(metaclass=_ImmutableClientType):
             )
         else:
             self._site_gate = AsyncSiteVersionGate(
-                pinned_version=pinned,
                 origin=self._origin,
                 transport=cast("AsyncCatalogTransport", transport),
                 ttl_seconds=settings.capability_cache_ttl,
@@ -2204,6 +2203,7 @@ class SyncUDataClient(_UDataClientCore):
         self._require_dispatchable(owning_id, effective)
         params = self._validate_page_params(operation)
         request = _page_request(origin=self._origin, params=params)
+        self._route_gate.require(request.method, request.url, str(owning_id), self._require_site_version().version)
         if credential is not None:
             request = RuntimeRequest(
                 method=request.method,
@@ -2468,6 +2468,9 @@ class AsyncUDataClient(_UDataClientCore):
         self._require_dispatchable(owning_id, effective)
         params = self._validate_page_params(operation)
         request = _page_request(origin=self._origin, params=params)
+        await self._route_gate.require_async(
+            request.method, request.url, str(owning_id), (await self.site_version()).version
+        )
         if credential is not None:
             request = RuntimeRequest(
                 method=request.method,

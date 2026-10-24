@@ -56,6 +56,12 @@ class RecordingTransport:
 
     def send(self, request: RuntimeRequest) -> RuntimeResponse:
         self.requests.append(request)
+        if request.url.endswith("/api/1/swagger.json"):
+            return RuntimeResponse(
+                200,
+                {},
+                json.dumps({"swagger": "2.0", "basePath": "/api/1", "paths": {"/datasets/": {"get": {}}}}).encode(),
+            )
         if request.url.endswith("/api/1/site/"):
             return RuntimeResponse(status_code=200, headers={}, body=_site_body(self._site_version))
         if self._responses:
@@ -74,6 +80,12 @@ class RecordingAsyncTransport:
 
     async def send(self, request: RuntimeRequest) -> RuntimeResponse:
         self.requests.append(request)
+        if request.url.endswith("/api/1/swagger.json"):
+            return RuntimeResponse(
+                200,
+                {},
+                json.dumps({"swagger": "2.0", "basePath": "/api/1", "paths": {"/datasets/": {"get": {}}}}).encode(),
+            )
         if request.url.endswith("/api/1/site/"):
             return RuntimeResponse(status_code=200, headers={}, body=_site_body(self._site_version))
         return RuntimeResponse(status_code=200, headers={}, body=_page_body())
@@ -96,6 +108,7 @@ def test_sync_tracer_performs_one_anonymous_probe_then_one_dataset_read() -> Non
 
     assert [r.url for r in transport.requests] == [
         "http://127.0.0.1:5640/api/1/site/",
+        "http://127.0.0.1:5640/api/1/swagger.json",
         "http://127.0.0.1:5640/api/1/datasets/?page=1&page_size=20",
     ]
     assert all(not r.headers.get("X-API-KEY") for r in transport.requests)
@@ -108,7 +121,7 @@ def test_sync_tracer_performs_one_anonymous_probe_then_one_dataset_read() -> Non
 
 
 def test_version_mismatch_blocks_dataset_dispatch_with_typed_remedy() -> None:
-    transport = RecordingTransport(site_version="17.5.9")
+    transport = RecordingTransport(site_version="18.0.0")
     client = SyncUDataClient(
         transport,
         declared_udata_profile(),
@@ -120,7 +133,7 @@ def test_version_mismatch_blocks_dataset_dispatch_with_typed_remedy() -> None:
     with pytest.raises(UDataVersionError) as excinfo:
         client.datasets_list(operation, guard)
 
-    assert excinfo.value.metadata["version_state"] == "malformed"
+    assert excinfo.value.metadata["version_state"] == "unsupported"
     assert len(transport.requests) == 1
     assert transport.requests[0].url.endswith("/api/1/site/")
 
@@ -140,7 +153,7 @@ def test_injected_credential_attaches_only_to_the_dataset_read() -> None:
     client.datasets_list(operation, guard)
 
     assert transport.requests[0].headers == {}
-    assert transport.requests[1].headers.get("X-API-KEY") == "secret-key"
+    assert transport.requests[2].headers.get("X-API-KEY") == "secret-key"
 
 
 def test_unknown_payload_parameters_are_rejected_before_dispatch() -> None:
@@ -212,7 +225,7 @@ def test_async_tracer_probes_anonymously_reads_once_and_owns_closure() -> None:
     asyncio.run(run())
 
     assert owned.requests[0].headers == {}
-    assert owned.requests[1].headers.get("X-API-KEY") == "secret-key"
+    assert owned.requests[2].headers.get("X-API-KEY") == "secret-key"
     assert owned.aclose_count == 1
 
 

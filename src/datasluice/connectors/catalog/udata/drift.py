@@ -18,7 +18,7 @@ from datasluice.connectors.catalog.udata.probes import (
     SITE_PATH,
     UDataVersionError,
     parse_site_version,
-    require_exact_version,
+    require_supported_version,
 )
 from datasluice.connectors.catalog.udata.settings import normalize_origin
 from datasluice.domain.catalog.operations import AuthClass, MutationClass, OperationId
@@ -591,7 +591,7 @@ def _version_record(
         "envelope_key_count": len(envelope_keys),
     }
     try:
-        observed = require_exact_version(parse_site_version(payload), PINNED_UDATA_VERSION)
+        observed = require_supported_version(parse_site_version(payload))
     except UDataVersionError as error:
         metadata["version_state"] = error.version_state
         observed_version = _observed_version(payload)
