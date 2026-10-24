@@ -9,7 +9,7 @@ and one factory function — nothing else is public.
 | Package | Public surface | Pinned profile |
 |---------|----------------|----------------|
 | `datasluice.connectors.catalog.ckan` | `CKANConnector`, `create_ckan_connector` | CKAN `2.11.5`, Action API v3 |
-| `datasluice.connectors.catalog.udata` | `UDataConnector`, `create_udata_connector` | uData `17.6.0`, API v1 |
+| `datasluice.connectors.catalog.udata` | `UDataConnector`, `create_udata_connector` | uData `17.x`, with a `17.6.0` evidence baseline |
 | `datasluice.connectors.catalog.socrata` | `SocrataConnector`, `create_socrata_connector` | Socrata `3.0`, SODA 3 |
 
 Imports are always explicit and package-level:
@@ -24,6 +24,12 @@ The `datasluice.connectors.catalog` namespace itself re-exports nothing:
 platform APIs never leak through a shared root, and the package root
 exports only shared models, typed catalog errors, and the retained
 data-plane API.
+
+uData accepts valid versions in `>=17.0.0,<18.0.0`.
+Before dispatch, it checks each typed API operation against the deployment's anonymous Swagger method and path.
+Missing routes return a typed unsupported error. Unavailable or invalid Swagger evidence fails closed.
+The anonymous site bootstrap and OAuth routes are the only Swagger exemptions.
+Response decoding remains strict. Public mutations remain prohibited.
 
 ## How a connector is built
 

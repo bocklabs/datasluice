@@ -325,3 +325,45 @@ def test_slow_swagger_probe_exhausts_the_operation_deadline_before_dispatch() ->
     with pytest.raises(BudgetExhaustedError):
         client.datasets_list(*_datasets_operation())
     assert len(transport.requests) == 2
+
+
+@pytest.mark.parametrize("probe_path", ["/api/1/site/", "/api/1/swagger.json"])
+def test_refresh_during_an_async_probe_does_not_restore_stale_evidence(probe_path: str) -> None:
+    async def run() -> None:
+        started = asyncio.Event()
+        release = asyncio.Event()
+        surface = RuntimeResponse(
+            200,
+            {},
+            json.dumps(
+                {
+                    "swagger": "2.0",
+                    "basePath": "/api/1",
+                    "paths": {"/datasets/": {"get": {}}},
+                }
+            ).encode(),
+        )
+
+        class PendingSurfaceTransport(AsyncSurfaceTransport):
+            probes = 0
+
+            async def send(self, request: RuntimeRequest) -> RuntimeResponse:
+                if request.url.endswith(probe_path):
+                    self.probes += 1
+                    if self.probes == 1:
+                        started.set()
+                        await release.wait()
+                return await super().send(request)
+
+        transport = PendingSurfaceTransport(surface)
+        client = AsyncUDataClient(transport, declared_udata_profile(), origin="http://127.0.0.1:5640")
+        pending = asyncio.create_task(client.datasets_list(*_datasets_operation()))
+        await asyncio.wait_for(started.wait(), timeout=1)
+        client.invalidate()
+        release.set()
+        await pending
+        await client.datasets_list(*_datasets_operation())
+        assert transport.probes == 2
+        await client.aclose()
+
+    asyncio.run(run())

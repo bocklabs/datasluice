@@ -137,11 +137,14 @@ class UDataRouteGate:
         self._ttl = ttl_seconds
         self._clock = clock
         self._cache: dict[str, tuple[UDataRouteSurface, float]] = {}
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
+        self._generation = 0
         self._async_lock = asyncio.Lock()
 
     def invalidate(self) -> None:
-        self._cache.clear()
+        with self._lock:
+            self._generation += 1
+            self._cache.clear()
 
     @staticmethod
     def api_version(method: str, path: str) -> str | None:
@@ -169,7 +172,9 @@ class UDataRouteGate:
         cached = self._cache.get(api)
         return cached[0] if cached is not None and self._clock() - cached[1] < self._ttl else None
 
-    def _decode(self, response: RuntimeResponse, api: str, deadline: DeadlineMonitor | None) -> UDataRouteSurface:
+    def _decode(
+        self, response: RuntimeResponse, api: str, deadline: DeadlineMonitor | None, generation: int
+    ) -> UDataRouteSurface:
         if deadline is not None:
             deadline.assert_dispatchable()
         if not 200 <= response.status_code < 300 or len(response.body) > _MAX_BYTES:
@@ -177,7 +182,9 @@ class UDataRouteGate:
         surface = UDataRouteSurface.parse(strict_json(response.body), api)
         if deadline is not None:
             deadline.assert_dispatchable()
-        self._cache[api] = (surface, self._clock())
+        with self._lock:
+            if generation == self._generation:
+                self._cache[api] = (surface, self._clock())
         return surface
 
     @staticmethod
@@ -205,9 +212,13 @@ class UDataRouteGate:
         with self._lock:
             surface = self._cached(api)
             if surface is None:
+                generation = self._generation
                 try:
                     surface = self._decode(
-                        cast("CatalogTransport", self._transport).send(self._request(api, deadline)), api, deadline
+                        cast("CatalogTransport", self._transport).send(self._request(api, deadline)),
+                        api,
+                        deadline,
+                        generation,
                     )
                 except BudgetExhaustedError:
                     raise
@@ -229,9 +240,10 @@ class UDataRouteGate:
         async with self._async_lock:
             surface = self._cached(api)
             if surface is None:
+                generation = self._generation
                 try:
                     response = await cast("AsyncCatalogTransport", self._transport).send(self._request(api, deadline))
-                    surface = self._decode(response, api, deadline)
+                    surface = self._decode(response, api, deadline, generation)
                 except BudgetExhaustedError:
                     raise
                 except Exception:

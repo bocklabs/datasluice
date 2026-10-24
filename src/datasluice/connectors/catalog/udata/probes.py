@@ -157,6 +157,7 @@ class SiteVersionGate:
         self._ttl_seconds = ttl_seconds
         self._clock = clock
         self._lock = threading.Lock()
+        self._generation = 0
         self._cache: dict[str, tuple[SiteVersion, float]] = {}
 
     def require_current(self, credentials: object | None, *, deadline: DeadlineMonitor | None = None) -> SiteVersion:
@@ -175,14 +176,17 @@ class SiteVersionGate:
             cached = self._cache.get(scope)
             if cached is not None and self._clock() - cached[1] <= self._ttl_seconds:
                 return cached[0]
+            generation = self._generation
         observed = self._probe(deadline)
         with self._lock:
-            self._cache[scope] = (observed, self._clock())
+            if generation == self._generation:
+                self._cache[scope] = (observed, self._clock())
         return observed
 
     def invalidate(self) -> None:
         """Discard all cached site-version evidence."""
         with self._lock:
+            self._generation += 1
             self._cache.clear()
 
     def _probe(self, deadline: DeadlineMonitor | None = None) -> SiteVersion:
@@ -296,9 +300,11 @@ class AsyncSiteVersionGate(SiteVersionGate):
             cached = self._cache.get(scope)
             if cached is not None and self._clock() - cached[1] <= self._ttl_seconds:
                 return cached[0]
+            generation = self._generation
         observed = await self._probe_async(deadline)
         with self._lock:
-            self._cache[scope] = (observed, self._clock())
+            if generation == self._generation:
+                self._cache[scope] = (observed, self._clock())
         return observed
 
     async def _probe_async(self, deadline: DeadlineMonitor | None = None) -> SiteVersion:
