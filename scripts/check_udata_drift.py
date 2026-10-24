@@ -1,12 +1,3 @@
-"""Run the reviewed, bounded, advisory-only public uData drift check.
-
-The reviewed record at ``.planning/phases/04-udata-connector/04-DRIFT-TARGETS.md`` approves
-no public target, so the runtime allowlist is empty and the runner fails closed before any
-transport dispatch. This entry point therefore exits ``3`` until a reviewed decision approves
-two distinct deployments reporting the exact pinned release. It accepts no caller-supplied
-target, route, or origin, and it writes only the redacted advisory report.
-"""
-
 from __future__ import annotations
 
 import argparse
@@ -14,6 +5,7 @@ import json
 from pathlib import Path
 from typing import NoReturn
 
+from datasluice.connectors.catalog.udata.compatibility import udata_version_policy
 from datasluice.connectors.catalog.udata.drift import (
     APPROVED_TARGETS,
     DRIFT_SCHEMA_VERSION,
@@ -23,7 +15,6 @@ from datasluice.connectors.catalog.udata.drift import (
     MAX_READS_PER_RUN,
     MAX_TARGETS_PER_RUN,
     OUTAGE,
-    PINNED_UDATA_VERSION,
     READ_ALLOWLIST,
     DriftReport,
     run_udata_drift,
@@ -66,7 +57,7 @@ def disabled_payload() -> dict[str, object]:
     return {
         "schema_version": DRIFT_SCHEMA_VERSION,
         "status": "disabled",
-        "pinned_version": PINNED_UDATA_VERSION,
+        "supported_range": udata_version_policy().supported_range,
         "approved_targets": len(APPROVED_TARGETS),
         "max_targets_per_run": MAX_TARGETS_PER_RUN,
         "max_reads_per_run": MAX_READS_PER_RUN,
@@ -75,7 +66,7 @@ def disabled_payload() -> dict[str, object]:
         "detail": (
             "The reviewed uData public drift allowlist approves no target, so no public request was "
             "dispatched. Public drift monitoring stays disabled until two distinct deployments "
-            "report the exact pinned release."
+            "report a supported release."
         ),
     }
 

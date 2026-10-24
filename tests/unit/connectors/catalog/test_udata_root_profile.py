@@ -60,6 +60,7 @@ from datasluice.runtime.transport.base import (
 )
 from tests.helpers import udata_controlled as udata_evidence
 from tests.helpers.udata_controlled import _create_controlled_sync_client
+from tests.helpers.udata_test_support import swagger_response
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable, Generator, Mapping
@@ -844,6 +845,8 @@ class RouterTransport:
         self._suppress_next = False
 
     def send(self, request: RuntimeRequest) -> RuntimeResponse:
+        if response := swagger_response(request, self.routes):
+            return response
         suppress = self._suppress_next
         self._suppress_next = False
         if not suppress:
@@ -877,6 +880,8 @@ class AsyncRouterTransport:
         self._suppress_next = False
 
     async def send(self, request: RuntimeRequest) -> RuntimeResponse:
+        if response := swagger_response(request, self.routes):
+            return response
         suppress = self._suppress_next
         self._suppress_next = False
         if not suppress:
@@ -1817,7 +1822,9 @@ def test_root_export_emits_failure_only_after_stream_consumption_fails() -> None
             )
 
     events: list[Any] = []
-    transport = FailingStreamTransport(_routes())
+    transport = FailingStreamTransport(
+        _routes(("GET", _ORIGIN + "/api/1/site/datasets.csv", RuntimeResponse(200, {}, b"")))
+    )
     client = SyncUDataClient(
         transport,
         declared_udata_profile(),
@@ -2116,7 +2123,7 @@ def test_fabricated_controlled_evidence_cannot_authorize_an_injected_transport()
 def test_service_helper_override_cannot_bypass_transport_registry(monkeypatch: pytest.MonkeyPatch) -> None:
     from datasluice.connectors.catalog.udata.services import root_profile as root_service
 
-    transport = RouterTransport(_routes())
+    transport = RouterTransport(_routes(("PATCH", _SITE_URL, _json_response(200, _site_body()))))
     client = create_sync_client(UDataClientSettings(base_url=_ORIGIN, credential=_CREDENTIAL, sync_transport=transport))
     monkeypatch.setattr(root_service, "_controlled_sync_site_id", lambda _: "site")
     monkeypatch.setattr(root_service, "_controlled_sync_revalidate", lambda *args, **kwargs: True)
@@ -2181,6 +2188,8 @@ def test_controlled_factory_rejects_injected_transport_before_any_dispatch() -> 
 def test_root_mutation_does_not_dispatch_through_injected_transport() -> None:
     class FailingTransport(RouterTransport):
         def send(self, request: RuntimeRequest) -> RuntimeResponse:
+            if response := swagger_response(request, self.routes):
+                return response
             suppress = self._suppress_next
             self._suppress_next = False
             if not suppress:
@@ -2190,7 +2199,9 @@ def test_root_mutation_does_not_dispatch_through_injected_transport() -> None:
     transport, client = _sync_client(
         {},
         credential=_CREDENTIAL,
-        test_transport=FailingTransport({}),
+        test_transport=FailingTransport(
+            _routes(("PATCH", _SITE_URL, _json_response(200, _site_body(), {"Content-Type": "application/json"})))
+        ),
     )
     with client:
         result = client.root_profile.set_site(

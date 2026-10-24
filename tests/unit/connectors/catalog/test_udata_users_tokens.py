@@ -33,6 +33,7 @@ from datasluice.domain.catalog.safety import ConcurrencyPolicy, ConfirmationPoli
 from datasluice.errors.catalog import CatalogUnavailableError, CatalogValidationError, ForbiddenError
 from datasluice.runtime.events import EventEmitter, ListSink
 from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse
+from tests.helpers.udata_test_support import swagger_response
 
 if TYPE_CHECKING:
     from datasluice.connectors.catalog.udata.mapping import UDataPageEnvelope
@@ -49,6 +50,8 @@ class _Router:
         self.requests: list[RuntimeRequest] = []
 
     def send(self, request: RuntimeRequest) -> RuntimeResponse:
+        if response := swagger_response(request, self.routes):
+            return response
         self.requests.append(request)
         status, payload = self.routes[(request.method, request.url)]
         return RuntimeResponse(
@@ -663,7 +666,7 @@ def test_sync_interruption_after_dispatch_retains_cancelled_target_receipt() -> 
                 raise KeyboardInterrupt
             return super().send(request)
 
-    router = _InterruptedRouter(_routes())
+    router = _InterruptedRouter(_routes(("POST", "/api/1/me/api_tokens/", 200, {})))
     client = SyncUDataClient(router, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL)
     token_input = ApiTokenCreateInput()
     policy = _policy("create_api_token", "new-api-token")
@@ -684,7 +687,7 @@ def test_sync_generator_exit_after_dispatch_retains_cancelled_target_receipt() -
                 raise GeneratorExit
             return super().send(request)
 
-    router = _AbandonedRouter(_routes())
+    router = _AbandonedRouter(_routes(("POST", "/api/1/me/api_tokens/", 200, {})))
     client = SyncUDataClient(router, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL)
     token = ApiTokenCreateInput()
     policy = _policy("create_api_token", "new-api-token")
@@ -706,7 +709,7 @@ def test_sync_read_abandonment_settles_as_failed_before_reraising() -> None:
 
     events = ListSink()
     client = SyncUDataClient(
-        _AbandonedReadRouter(_routes()),
+        _AbandonedReadRouter(_routes(("GET", "/api/1/users/person/", 200, {}))),
         declared_udata_profile(),
         origin=ORIGIN,
         credentials=CREDENTIAL,
@@ -727,7 +730,7 @@ def test_async_read_abandonment_settles_as_failed_before_reraising() -> None:
 
     events = ListSink()
     client = AsyncUDataClient(
-        _AbandonedReadRouter(_routes()),
+        _AbandonedReadRouter(_routes(("GET", "/api/1/users/person/", 200, {}))),
         declared_udata_profile(),
         origin=ORIGIN,
         credentials=CREDENTIAL,

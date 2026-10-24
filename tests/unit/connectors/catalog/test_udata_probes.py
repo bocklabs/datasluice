@@ -101,3 +101,23 @@ def test_site_access_errors_preserve_status_and_capability_state(status: int) ->
         gate.require_current(None)
     assert raised.value.metadata["status_code"] == status
     assert raised.value.capability_state == {401: "unauthorized", 403: "forbidden", 423: "deployment-disabled"}[status]
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        b'{"version":"17.6.0","version":"18.0.0"}',
+        b'{"version":NaN}',
+        b"[" * 1000 + b"]" * 1000,
+        b" " * (64 * 1024 + 1),
+    ],
+)
+def test_site_document_decode_rejects_invalid_or_oversized_json(body: bytes) -> None:
+    from datasluice.connectors.catalog.udata.probes import SiteVersionGate
+    from tests.helpers.udata_test_support import sync_route_table
+
+    router = sync_route_table({("GET", "http://127.0.0.1:5640/api/1/site/"): (200, body)})
+    gate = SiteVersionGate(origin="http://127.0.0.1:5640", transport=router, ttl_seconds=60)
+    with pytest.raises(UDataVersionError) as raised:
+        gate.require_current(None)
+    assert raised.value.version_state == "malformed"

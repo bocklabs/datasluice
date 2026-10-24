@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Final, Protocol
 from urllib.parse import urlencode
 
 from datasluice.connectors.catalog.udata.clients import declared_udata_profile
+from datasluice.connectors.catalog.udata.compatibility import udata_version_policy
 from datasluice.connectors.catalog.udata.mapping import NATIVE_PAGE_FIELDS, PLATFORM
 from datasluice.connectors.catalog.udata.probes import (
     SITE_OPERATION_ID,
@@ -34,7 +35,7 @@ if TYPE_CHECKING:
     from datasluice.domain.catalog.observability import TLSPolicy
 
 DRIFT_SCHEMA_VERSION: Final = "udata-drift/1"
-PINNED_UDATA_VERSION: Final = "17.6.0"
+PINNED_UDATA_VERSION: Final = declared_udata_profile().profile_version
 DRIFT_OPERATION: Final = "udata/api-v1.public-drift-read"
 
 MAX_PAGE_SIZE: Final = 1
@@ -83,7 +84,7 @@ MATCHED_DETAIL: Final = "the observed envelope matched the pinned structural ske
 DRIFTED_DETAIL: Final = "the observed envelope key set differed from the pinned structural skeleton"
 NON_JSON_DETAIL: Final = "the deployment returned a payload that is not the documented JSON envelope"
 OUTAGE_DETAIL: Final = "the public read could not be completed against the reviewed target"
-INCOMPATIBLE_DETAIL: Final = "the deployment did not prove the exact pinned uData release"
+INCOMPATIBLE_DETAIL: Final = "the deployment did not prove a supported uData release"
 SKIPPED_DETAIL: Final = "the read was skipped after the target failed its availability or version gate"
 
 
@@ -278,7 +279,7 @@ class DriftTarget:
             )
         if self.reads[0] != _SITE_READ_ID:
             raise CatalogValidationError(
-                "Every drift target proves the exact pinned site version before any other read.",
+                "Every drift target proves a supported site version before any other read.",
                 operation=DRIFT_OPERATION,
                 platform=PLATFORM.value,
                 safe_action="Place the site version probe read first on every drift target.",
@@ -586,7 +587,7 @@ def _version_record(
 ) -> tuple[DriftRecord, str | None]:
     envelope_keys = _envelope_keys(payload)
     metadata: dict[str, object] = {
-        "pinned_version": PINNED_UDATA_VERSION,
+        "supported_range": udata_version_policy().supported_range,
         "site_identity_present": isinstance(payload, Mapping) and bool(payload.get("id")),
         "envelope_key_count": len(envelope_keys),
     }

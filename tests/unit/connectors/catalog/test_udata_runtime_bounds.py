@@ -23,6 +23,7 @@ from tests.helpers.udata_test_support import (
     UDATA_SITE,
     async_client,
     async_route_table,
+    swagger_response,
     sync_client,
     sync_route_table,
     with_site_route,
@@ -167,13 +168,17 @@ def test_wait_transport_uses_the_lease_deadline(
     observed: list[DeadlineMonitor] = []
 
     def response(request: RuntimeRequest) -> RuntimeResponse:
+        if result := swagger_response(
+            request, {("GET", "/api/1/harvest/job/job/"): None, ("GET", "/api/1/workers/tasks/job/"): None}
+        ):
+            return result
         if request.url.endswith("/api/1/site/"):
             return RuntimeResponse(200, {}, json.dumps(UDATA_SITE).encode())
         assert request.deadline is not None
         observed.append(request.deadline)
         now[0] += 0.5
         request.deadline.assert_dispatchable()
-        status = "processing" if family == "harvest" else "PENDING"
+        status = {"harvest": "processing", "task": "PENDING"}[family]
         return RuntimeResponse(200, {}, json.dumps({"id": "job", "status": status}).encode())
 
     budget = TimeBudget(1, 1, 1, 1)

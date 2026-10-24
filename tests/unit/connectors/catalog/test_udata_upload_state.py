@@ -31,6 +31,12 @@ from datasluice.errors.catalog import (
     NativeCatalogError,
 )
 from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse, TransportError, UploadStream
+from tests.helpers.udata_test_support import swagger_response
+
+_UPLOAD_ROUTES = {
+    ("POST", path): None
+    for path in ("/api/1/datasets/{dataset}/upload/", "/api/1/datasets/{dataset}/resources/{resource}/upload/")
+}
 
 
 class _InterruptingTransport:
@@ -38,6 +44,8 @@ class _InterruptingTransport:
         self.close_count = 0
 
     def send(self, request: RuntimeRequest) -> RuntimeResponse:
+        if response := swagger_response(request, _UPLOAD_ROUTES):
+            return response
         if request.url.endswith("/api/1/site/"):
             body = json.dumps(
                 {"id": "site", "title": "uData", "version": "17.6.0", "feed_size": 0, "keywords": [], "metrics": {}}
@@ -58,6 +66,8 @@ class _CancellingTransport:
         self.close_count = 0
 
     async def send(self, request: RuntimeRequest) -> RuntimeResponse:
+        if response := swagger_response(request, _UPLOAD_ROUTES):
+            return response
         if request.url.endswith("/api/1/site/"):
             return _InterruptingTransport().send(request)
         assert len(request.files) == 1
@@ -242,6 +252,8 @@ def test_upload_malformed_2xx_is_ambiguous_and_307_is_not_replayed() -> None:
             self.upload_calls = 0
 
         def send(self, request: RuntimeRequest) -> RuntimeResponse:
+            if response := swagger_response(request, _UPLOAD_ROUTES):
+                return response
             if request.url.endswith("/api/1/site/"):
                 return super().send(request)
             if request.url.endswith("/api/1/datasets/dataset/upload/"):
@@ -324,6 +336,8 @@ def test_retry_opted_in_upload_is_attempted_once_because_the_stream_is_one_shot(
     class MidStreamReset(_InterruptingTransport):
         def send(self, request: RuntimeRequest) -> RuntimeResponse:
             nonlocal upload_calls
+            if response := swagger_response(request, _UPLOAD_ROUTES):
+                return response
             if request.url.endswith("/api/1/site/"):
                 return super().send(request)
             upload_calls += 1
@@ -364,6 +378,8 @@ def test_async_retry_opted_in_upload_is_attempted_once_because_the_stream_is_one
     class AsyncMidStreamReset(_CancellingTransport):
         async def send(self, request: RuntimeRequest) -> RuntimeResponse:
             nonlocal upload_calls
+            if response := swagger_response(request, _UPLOAD_ROUTES):
+                return response
             if request.url.endswith("/api/1/site/"):
                 return _InterruptingTransport().send(request)
             upload_calls += 1
@@ -454,6 +470,8 @@ class _DrainingTransport:
         return RuntimeResponse(200, {"Content-Type": "application/json"}, json.dumps({"id": "resource"}).encode())
 
     def send(self, request: RuntimeRequest) -> RuntimeResponse:
+        if response := swagger_response(request, _UPLOAD_ROUTES):
+            return response
         if request.url.endswith("/api/1/site/"):
             return self._site()
         return self._drain(request)
@@ -472,6 +490,8 @@ class _AsyncCancellingDrainTransport:
         self._limit = after_bytes
 
     async def send(self, request: RuntimeRequest) -> RuntimeResponse:
+        if response := swagger_response(request, _UPLOAD_ROUTES):
+            return response
         if request.url.endswith("/api/1/site/"):
             body = json.dumps(
                 {"id": "site", "title": "uData", "version": "17.6.0", "feed_size": 0, "keywords": [], "metrics": {}}

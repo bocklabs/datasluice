@@ -39,6 +39,7 @@ from datasluice.errors.catalog import (
     UnauthenticatedError,
 )
 from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse, TransportError
+from tests.helpers.udata_test_support import swagger_response
 
 if TYPE_CHECKING:
     from datasluice.domain.catalog.operations import OperationId
@@ -116,6 +117,8 @@ class RouterTransport:
         self.aclose_count = 0
 
     def send(self, request: RuntimeRequest) -> RuntimeResponse:
+        if response := swagger_response(request, self._routes):
+            return response
         self.requests.append(request)
         key = (request.method, request.url)
         if key not in self._routes:
@@ -134,6 +137,8 @@ class RouterAsyncTransport:
         self.aclose_count = 0
 
     async def send(self, request: RuntimeRequest) -> RuntimeResponse:
+        if response := swagger_response(request, self._routes):
+            return response
         self.requests.append(request)
         return _respond(self._routes[(request.method, request.url)])
 
@@ -728,7 +733,7 @@ def test_cr03_destructive_calls_are_never_auto_retried() -> None:
                 return RuntimeResponse(status_code=500, headers={}, body=b"{}")
             return super().send(request)
 
-    transport = FlakyTransport(_site_first({}))
+    transport = FlakyTransport(_site_first({("DELETE", "http://127.0.0.1:5640/api/1/datasets/abc/"): None}))
     client = SyncUDataClient(
         transport,
         declared_udata_profile(),
@@ -919,7 +924,7 @@ def test_cr05_foreign_origin_probe_evidence_is_rejected() -> None:
         ).encode()
     }
     client = SyncUDataClient(
-        RouterTransport(routes),
+        RouterTransport({**routes, ("GET", "https://datasets.example.com/api/1/datasets/"): None}),
         declared_udata_profile(),
         origin="https://datasets.example.com",
         probe_runner=ForeignRunner(),
@@ -1127,7 +1132,7 @@ def test_cr02_transport_failure_keeps_an_ambiguous_receipt_on_the_original_error
                 raise TransportError("connection dropped after dispatch")
             return super().send(request)
 
-    transport = FailingTransport(_site_first({}))
+    transport = FailingTransport(_site_first({("POST", "http://127.0.0.1:5640/api/1/datasets/"): None}))
     client = SyncUDataClient(
         transport,
         declared_udata_profile(),

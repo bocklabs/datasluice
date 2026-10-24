@@ -58,6 +58,7 @@ from datasluice.errors.catalog import (
     CatalogUnavailableError,
     CatalogValidationError,
     NativeCatalogError,
+    UnsupportedCapabilityError,
     attach_catalog_metadata,
     map_catalog_error,
 )
@@ -353,14 +354,12 @@ def _build_stream_request(
     path: str,
     headers: Mapping[str, str] | None,
     resolved_credential: object,
-    budget: TimeBudget,
-    clock: Callable[[], float],
+    deadline: DeadlineMonitor,
     transport: object,
 ) -> tuple[RuntimeRequest, DeadlineMonitor, object]:
     """Build the no-follow stream request and prove the transport can stream it."""
     request_headers = dict(headers or {})
     request_headers.update(_auth_headers(resolved_credential))
-    deadline = DeadlineMonitor(budget, clock=clock)
     deadline.assert_dispatchable(str(owning_id), PLATFORM.value)
     request = RuntimeRequest(
         method="GET",
@@ -1434,26 +1433,15 @@ class _UDataClientCore(metaclass=_ImmutableClientType):
         """Resolve the current credential asynchronously for pre-dispatch validation."""
         return await _refreshed_credential_async(self._credentials)
 
-    def _require_dispatchable(
-        self,
-        owning_id: OperationId,
-        effective: EffectiveCapabilityProfile,
-        permissions: EffectivePermissions | None = None,
-    ) -> None:
-        """Refuse a public origin for a non-read route, then run the capability guard.
-
-        PROHIB-04-01 keeps mutations, administration, token changes, and uploads inside
-        a controlled deployment. The pinned profile's declared mutation class is the
-        only discriminator, so no route list is hand-maintained here.
-
-        Args:
-            owning_id: The pinned profile identity of the route being dispatched.
-            effective: The effective capability profile resolved for the credential.
-            permissions: Optional effective permissions required by the caller.
-
-        Raises:
-            CatalogValidationError: If the origin is public and the route is not a read.
-        """
+    def _require_route_operation(self, owning_id: OperationId) -> None:
+        if owning_id not in self._profile.declared_profile.operations:
+            raise UnsupportedCapabilityError(
+                "The uData profile does not declare this operation.",
+                operation=str(owning_id),
+                platform=PLATFORM.value,
+                capability_state="unsupported",
+                safe_action="Use an operation declared by the uData profile.",
+            )
         if not self._controlled_origin() and self._declared_mutation_class(owning_id) is not MutationClass.READ:
             raise CatalogValidationError(
                 "uData mutations, administration, and uploads require a controlled local deployment.",
@@ -1461,6 +1449,14 @@ class _UDataClientCore(metaclass=_ImmutableClientType):
                 platform=PLATFORM.value,
                 safe_action="Point the client at a loopback uData deployment before dispatching this route.",
             )
+
+    def _require_dispatchable(
+        self,
+        owning_id: OperationId,
+        effective: EffectiveCapabilityProfile,
+        permissions: EffectivePermissions | None = None,
+    ) -> None:
+        self._require_route_operation(owning_id)
         build_catalog_operation_guard(owning_id, effective, permissions=permissions).require_allowed()
 
     def _controlled_origin(self) -> bool:
@@ -1749,6 +1745,15 @@ class _UDataClientCore(metaclass=_ImmutableClientType):
         credential_scope: str = "anonymous",
         accept_status: Callable[[int], bool] | None = None,
     ) -> None:
+        if owning_id.service == "oauth" and response.status_code in {404, 405}:
+            raise UnsupportedCapabilityError(
+                "The uData deployment does not expose this OAuth operation.",
+                operation=str(owning_id),
+                platform=PLATFORM.value,
+                capability_state="unsupported",
+                metadata={"route_state": "absent", "api_version": "oauth", "status_code": response.status_code},
+                safe_action="Use an OAuth operation exposed by this deployment.",
+            )
         if redirect_mode and response.status_code in {301, 302, 303, 307, 308}:
             return
         if accept_status is not None and accept_status(response.status_code):
@@ -1825,6 +1830,7 @@ class _UDataClientCore(metaclass=_ImmutableClientType):
             target = _operation_id_from(operation_id)
         self._capabilities.invalidate(target)
         self._site_gate.invalidate()
+        self._route_gate.invalidate()
 
     def platform_metadata(self) -> Mapping[str, object]:
         """Return safe pinned-profile metadata."""
@@ -1974,6 +1980,13 @@ class SyncUDataClient(_UDataClientCore):
             return gate.require_current(self._credentials, deadline=deadline)
         raise RuntimeError("The synchronous uData client requires a synchronous site gate.")
 
+    def _admit_route(
+        self, owning_id: OperationId, method: str, path: str, *, deadline: DeadlineMonitor | None = None
+    ) -> None:
+        self._require_route_operation(owning_id)
+        observed = self._require_site_version(deadline=deadline)
+        self._route_gate.require(method, path, str(owning_id), observed.version, deadline)
+
     def datasets_list(
         self, operation: CatalogOperationRequest, guard: CatalogOperationGuard
     ) -> ResultEnvelope[UDataResultItem]:
@@ -2017,7 +2030,7 @@ class SyncUDataClient(_UDataClientCore):
     ) -> tuple[int, object, RuntimeResponse]:
         """Run one guarded dataset request scoped to its owning route operation."""
         owning_id, deadline = self._dataset_deadline(owning_operation, overrides, _SYNC_UDATA_CLIENT_CLOSED)
-        self._require_site_version(deadline=deadline)
+        self._admit_route(owning_id, method, path, deadline=deadline)
         if overrides.get("omit_credential", False):
             resolved_credential = None
         elif credential is not None:
@@ -2106,7 +2119,8 @@ class SyncUDataClient(_UDataClientCore):
         try:
             if self._closed:
                 raise RuntimeError(_SYNC_UDATA_CLIENT_CLOSED)
-            self._require_site_version()
+            deadline = DeadlineMonitor(self._budget, clock=self._clock)
+            self._admit_route(owning_id, "GET", path, deadline=deadline)
             resolved_credential = credential if credential is not None else _refreshed_credential(self._credentials)
             scope = _credential_scope(resolved_credential)
             if scope != self._credential_scope:
@@ -2121,8 +2135,7 @@ class SyncUDataClient(_UDataClientCore):
                 path=path,
                 headers=headers,
                 resolved_credential=resolved_credential,
-                budget=self._budget,
-                clock=self._clock,
+                deadline=deadline,
                 transport=self._transport,
             )
             send = cast("Callable[[RuntimeRequest], RuntimeStreamResponse]", send_stream)
@@ -2189,10 +2202,16 @@ class SyncUDataClient(_UDataClientCore):
     ) -> ResultEnvelope[UDataResultItem]:
         if self._closed:
             raise RuntimeError(_SYNC_UDATA_CLIENT_CLOSED)
+        if operation.operation_id not in self._profile.declared_profile.operations:
+            self._require_route_operation(operation.operation_id)
         _enforce_caller_guards(operation, guard)
         if operation.operation_id != owning_id:
             raise unimplemented_family(str(operation.operation_id))
-        self._require_site_version()
+        deadline = DeadlineMonitor(self._budget, clock=self._clock)
+        self._require_site_version(deadline=deadline)
+        params = self._validate_page_params(operation)
+        request = _page_request(origin=self._origin, params=params)
+        self._admit_route(owning_id, request.method, request.url, deadline=deadline)
         credential = _refreshed_credential(self._credentials)
         scope = _credential_scope(credential)
         if scope != self._credential_scope:
@@ -2201,9 +2220,6 @@ class SyncUDataClient(_UDataClientCore):
             self._credential_scope = scope
         effective = self._capabilities.resolve(owning_id, credential_scope=scope)
         self._require_dispatchable(owning_id, effective)
-        params = self._validate_page_params(operation)
-        request = _page_request(origin=self._origin, params=params)
-        self._route_gate.require(request.method, request.url, str(owning_id), self._require_site_version().version)
         if credential is not None:
             request = RuntimeRequest(
                 method=request.method,
@@ -2212,7 +2228,6 @@ class SyncUDataClient(_UDataClientCore):
                 body=request.body,
                 max_response_bytes=request.max_response_bytes,
             )
-        deadline = DeadlineMonitor(self._budget, clock=self._clock)
         deadline.assert_dispatchable(str(owning_id), PLATFORM.value)
         sync_transport = cast("CatalogTransport", self._transport)
         key = _circuit_key(request, self._credentials)
@@ -2281,6 +2296,8 @@ class SyncUDataClient(_UDataClientCore):
         """Close the client and its owned transport exactly once."""
         if not self._closed:
             self._closed = True
+            self._site_gate.invalidate()
+            self._route_gate.invalidate()
             if self._owns_transport:
                 cast("CatalogTransport", self._transport).close()
 
@@ -2438,6 +2455,13 @@ class AsyncUDataClient(_UDataClientCore):
         """Expose the typed stock extension and deployment-probe service."""
         return AsyncExtensionsService(self)
 
+    async def _admit_route_async(
+        self, owning_id: OperationId, method: str, path: str, *, deadline: DeadlineMonitor | None = None
+    ) -> None:
+        self._require_route_operation(owning_id)
+        observed = await self.site_version(deadline=deadline)
+        await self._route_gate.require_async(method, path, str(owning_id), observed.version, deadline)
+
     async def datasets_list(
         self, operation: CatalogOperationRequest, guard: CatalogOperationGuard
     ) -> ResultEnvelope[UDataResultItem]:
@@ -2454,10 +2478,16 @@ class AsyncUDataClient(_UDataClientCore):
     ) -> ResultEnvelope[UDataResultItem]:
         if self._closed:
             raise RuntimeError(_ASYNC_UDATA_CLIENT_CLOSED)
+        if operation.operation_id not in self._profile.declared_profile.operations:
+            self._require_route_operation(operation.operation_id)
         _enforce_caller_guards(operation, guard)
         if operation.operation_id != owning_id:
             raise unimplemented_family(str(operation.operation_id))
-        await self.site_version()
+        deadline = DeadlineMonitor(self._budget, clock=self._clock)
+        await self.site_version(deadline=deadline)
+        params = self._validate_page_params(operation)
+        request = _page_request(origin=self._origin, params=params)
+        await self._admit_route_async(owning_id, request.method, request.url, deadline=deadline)
         credential = await _refreshed_credential_async(self._credentials)
         scope = _credential_scope(credential)
         if scope != self._credential_scope:
@@ -2466,11 +2496,6 @@ class AsyncUDataClient(_UDataClientCore):
             self._credential_scope = scope
         effective = await self._capabilities.resolve_async(owning_id, credential_scope=scope)
         self._require_dispatchable(owning_id, effective)
-        params = self._validate_page_params(operation)
-        request = _page_request(origin=self._origin, params=params)
-        await self._route_gate.require_async(
-            request.method, request.url, str(owning_id), (await self.site_version()).version
-        )
         if credential is not None:
             request = RuntimeRequest(
                 method=request.method,
@@ -2479,7 +2504,6 @@ class AsyncUDataClient(_UDataClientCore):
                 body=request.body,
                 max_response_bytes=request.max_response_bytes,
             )
-        deadline = DeadlineMonitor(self._budget, clock=self._clock)
         deadline.assert_dispatchable(str(owning_id), PLATFORM.value)
         async_transport = cast("AsyncCatalogTransport", self._transport)
         key = _circuit_key(request, self._credentials)
@@ -2617,7 +2641,7 @@ class AsyncUDataClient(_UDataClientCore):
         owning_id = _operation_id_from(owning_operation)
         deadline = overrides.get("deadline") or DeadlineMonitor(self._budget, clock=self._clock)
         deadline.assert_dispatchable(str(owning_id), PLATFORM.value)
-        await self.site_version(deadline=deadline)
+        await self._admit_route_async(owning_id, method, path, deadline=deadline)
         if omit_credential:
             resolved_credential = None
         elif credential is not None:
@@ -2736,7 +2760,8 @@ class AsyncUDataClient(_UDataClientCore):
         try:
             if self._closed:
                 raise RuntimeError(_ASYNC_UDATA_CLIENT_CLOSED)
-            await self.site_version()
+            deadline = DeadlineMonitor(self._budget, clock=self._clock)
+            await self._admit_route_async(owning_id, "GET", path, deadline=deadline)
             resolved_credential = (
                 credential if credential is not None else await _refreshed_credential_async(self._credentials)
             )
@@ -2753,8 +2778,7 @@ class AsyncUDataClient(_UDataClientCore):
                 path=path,
                 headers=headers,
                 resolved_credential=resolved_credential,
-                budget=self._budget,
-                clock=self._clock,
+                deadline=deadline,
                 transport=self._transport,
             )
             send = cast("Callable[[RuntimeRequest], Awaitable[AsyncRuntimeStreamResponse]]", send_stream)
@@ -2816,6 +2840,8 @@ class AsyncUDataClient(_UDataClientCore):
         """Close the client and its owned transport exactly once."""
         if not self._closed:
             self._closed = True
+            self._site_gate.invalidate()
+            self._route_gate.invalidate()
             if self._owns_transport:
                 await cast("AsyncCatalogTransport", self._transport).aclose()
 

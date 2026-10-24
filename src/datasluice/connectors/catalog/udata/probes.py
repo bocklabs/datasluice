@@ -1,5 +1,3 @@
-"""Strict anonymous uData version gate resolving the supported 17.x contract."""
-
 from __future__ import annotations
 
 import threading
@@ -245,7 +243,7 @@ class SiteVersionGate:
         invalid_payload = False
         try:
             payload = strict_json(response.body) if len(response.body) <= _SITE_PROBE_MAX_BYTES else None
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, RecursionError):
             invalid_payload = True
             payload = None
         if invalid_payload:

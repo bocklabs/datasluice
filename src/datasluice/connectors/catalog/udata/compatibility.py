@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 from importlib import resources
 from time import monotonic
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Never, cast
 from urllib.parse import urlsplit
 
 from datasluice.errors.catalog import BudgetExhaustedError, CatalogUnavailableError, UnsupportedCapabilityError
@@ -71,7 +71,10 @@ def strict_json(body: bytes) -> object:
             result[key] = value
         return result
 
-    return json.loads(body, object_pairs_hook=unique)
+    def invalid_constant(value: str) -> Never:
+        raise ValueError("The deployment document contains a non-finite number.")
+
+    return json.loads(body, object_pairs_hook=unique, parse_constant=invalid_constant)
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,6 +108,8 @@ def _validate_path(path: object) -> None:
         raise ValueError("The Swagger path is invalid.")
     if any(char in path for char in "?#\\") or any(char.isspace() for char in path):
         raise ValueError("The Swagger path must not contain query or fragment data.")
+    if any(len(_PARAMETER.findall(segment)) > 1 for segment in path.split("/")):
+        raise ValueError("A Swagger segment must contain at most one parameter.")
     if any(char in _PARAMETER.sub("parameter", path) for char in "{}"):
         raise ValueError("The Swagger path contains a malformed parameter.")
 
@@ -141,7 +146,7 @@ class UDataRouteGate:
     @staticmethod
     def api_version(method: str, path: str) -> str | None:
         path = urlsplit(path).path
-        if (method.upper() == "GET" and path == "/api/1/site/") or path.startswith("/oauth/"):
+        if path.startswith("/oauth/"):
             return None
         match = re.match(r"/api/([12])/", path)
         if match is None:
@@ -149,6 +154,8 @@ class UDataRouteGate:
         return match[1]
 
     def _request(self, api: str, deadline: DeadlineMonitor | None) -> RuntimeRequest:
+        if deadline is not None:
+            deadline.assert_dispatchable()
         return RuntimeRequest(
             method="GET",
             url=f"{self._origin}/api/{api}/swagger.json",
@@ -162,10 +169,14 @@ class UDataRouteGate:
         cached = self._cache.get(api)
         return cached[0] if cached is not None and self._clock() - cached[1] < self._ttl else None
 
-    def _decode(self, response: RuntimeResponse, api: str) -> UDataRouteSurface:
+    def _decode(self, response: RuntimeResponse, api: str, deadline: DeadlineMonitor | None) -> UDataRouteSurface:
+        if deadline is not None:
+            deadline.assert_dispatchable()
         if not 200 <= response.status_code < 300 or len(response.body) > _MAX_BYTES:
             raise ValueError("The Swagger response is unavailable or oversized.")
         surface = UDataRouteSurface.parse(strict_json(response.body), api)
+        if deadline is not None:
+            deadline.assert_dispatchable()
         self._cache[api] = (surface, self._clock())
         return surface
 
@@ -196,7 +207,7 @@ class UDataRouteGate:
             if surface is None:
                 try:
                     surface = self._decode(
-                        cast("CatalogTransport", self._transport).send(self._request(api, deadline)), api
+                        cast("CatalogTransport", self._transport).send(self._request(api, deadline)), api, deadline
                     )
                 except BudgetExhaustedError:
                     raise
@@ -220,7 +231,7 @@ class UDataRouteGate:
             if surface is None:
                 try:
                     response = await cast("AsyncCatalogTransport", self._transport).send(self._request(api, deadline))
-                    surface = self._decode(response, api)
+                    surface = self._decode(response, api, deadline)
                 except BudgetExhaustedError:
                     raise
                 except Exception:

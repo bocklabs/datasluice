@@ -35,6 +35,7 @@ from datasluice.runtime.transport.base import (
     RuntimeResponse,
     RuntimeStreamResponse,
 )
+from tests.helpers.udata_test_support import swagger_response
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable, Mapping
@@ -205,6 +206,12 @@ class _FixtureSyncTransport:
         self.stream_close_count = 0
 
     def send(self, request: RuntimeRequest) -> RuntimeResponse:
+        routes = {
+            (cast("str", row["method"]), cast("str", row["path"]).replace("<format>", "json")): None
+            for row in _root_read_rows()
+        }
+        if response := swagger_response(request, routes):
+            return response
         self.requests.append(request)
         return self._responder(request)
 
@@ -232,6 +239,12 @@ class _FixtureAsyncTransport:
         self.stream_close_count = 0
 
     async def send(self, request: RuntimeRequest) -> RuntimeResponse:
+        routes = {
+            (cast("str", row["method"]), cast("str", row["path"]).replace("<format>", "json")): None
+            for row in _root_read_rows()
+        }
+        if response := swagger_response(request, routes):
+            return response
         self.requests.append(request)
         return self._responder(request)
 

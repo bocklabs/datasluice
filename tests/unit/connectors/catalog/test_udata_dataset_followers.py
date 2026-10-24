@@ -379,7 +379,7 @@ def test_dataset_follower_dispatch_failure_keeps_its_receipt_without_a_retry(
     mode: str, method: str, failure: type[BaseException], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     operation = FOLLOW if method == "follow_dataset" else UNFOLLOW
-    transport = _transport(mode, {})
+    transport = _transport(mode, {("POST" if method == "follow_dataset" else "DELETE", ORIGIN + PATH): None})
     if isinstance(transport, RouterTransport):
         original = transport.send
 
@@ -410,7 +410,9 @@ def test_dataset_follower_dispatch_failure_keeps_its_receipt_without_a_retry(
 @pytest.mark.parametrize("method", ["follow_dataset", "unfollow_dataset"])
 def test_dataset_follower_cancellation_keeps_its_receipt(method: str, monkeypatch: pytest.MonkeyPatch) -> None:
     operation = FOLLOW if method == "follow_dataset" else UNFOLLOW
-    transport = RouterAsyncTransport(_site_first({}))
+    transport = RouterAsyncTransport(
+        _site_first({("POST" if method == "follow_dataset" else "DELETE", ORIGIN + PATH): None})
+    )
     original = transport.send
 
     async def send(request: RuntimeRequest) -> RuntimeResponse:

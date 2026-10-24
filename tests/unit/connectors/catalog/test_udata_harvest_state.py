@@ -18,6 +18,7 @@ from tests.helpers.udata_test_support import (
     SyncRouteRouter,
     async_client,
     encoded_body,
+    swagger_response,
     sync_client,
 )
 
@@ -70,6 +71,8 @@ class PollingRouter:
         )
 
     def route(self, request: RuntimeRequest) -> RuntimeResponse:
+        if response := swagger_response(request, {("GET", JOB_URL): None}):
+            return response
         if request.url == f"{ORIGIN}/api/1/site/":
             return _SITE_RESPONSE
         if request.url == JOB_URL:

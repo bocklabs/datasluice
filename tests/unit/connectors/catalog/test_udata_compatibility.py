@@ -5,7 +5,7 @@ import json
 
 import pytest
 
-from datasluice.connectors.catalog.udata.clients import SyncUDataClient, declared_udata_profile
+from datasluice.connectors.catalog.udata.clients import AsyncUDataClient, SyncUDataClient, declared_udata_profile
 from datasluice.connectors.catalog.udata.compatibility import UDataRouteSurface, udata_version_policy
 from datasluice.errors.catalog import CatalogError, CatalogUnavailableError, UnsupportedCapabilityError
 from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse
@@ -50,6 +50,30 @@ def test_route_templates_prefer_literals_and_ignore_query_values() -> None:
     assert surface.allows("GET", "/api/1/datasets/abc/?key=private")
     assert not surface.allows("GET", "/api/1/datasets/search/")
     assert surface.allows("POST", "/api/1/datasets/search/")
+
+
+def test_route_parser_rejects_ambiguous_parameter_segments() -> None:
+    with pytest.raises(ValueError, match="at most one parameter"):
+        UDataRouteSurface.parse(
+            {
+                "swagger": "2.0",
+                "basePath": "/api/1",
+                "paths": {"/{first}{second}/": {"get": {}}},
+            },
+            "1",
+        )
+
+
+def test_route_parser_limits_the_deployment_surface() -> None:
+    with pytest.raises(ValueError, match="bounded"):
+        UDataRouteSurface.parse(
+            {
+                "swagger": "2.0",
+                "basePath": "/api/1",
+                "paths": {f"/route-{index}/": {"get": {}} for index in range(4097)},
+            },
+            "1",
+        )
 
 
 class SurfaceTransport(RecordingTransport):
@@ -121,3 +145,183 @@ def test_async_17_16_deployment_completes_dataset_read() -> None:
         await client.aclose()
 
     asyncio.run(run())
+
+
+def test_removed_native_route_blocks_before_dispatch() -> None:
+    class NativeTransport(SurfaceTransport):
+        def send(self, request: RuntimeRequest) -> RuntimeResponse:
+            if request.url.endswith("/datasets/private-id/"):
+                self.requests.append(request)
+                return RuntimeResponse(200, {}, b'{"id":"private-id","title":"Dataset","slug":"dataset"}')
+            return super().send(request)
+
+    transport = NativeTransport(
+        RuntimeResponse(
+            200,
+            {},
+            json.dumps(
+                {
+                    "swagger": "2.0",
+                    "basePath": "/api/1",
+                    "paths": {"/datasets/": {"get": {}}},
+                }
+            ).encode(),
+        )
+    )
+    client = SyncUDataClient(transport, declared_udata_profile(), origin="http://127.0.0.1:5640")
+    outcome = "dispatched"
+    try:
+        client.datasets.get("private-id")
+    except UnsupportedCapabilityError:
+        outcome = "unsupported"
+    assert outcome == "unsupported"
+    assert len(transport.requests) == 2
+
+
+_ABSENT_SURFACE = RuntimeResponse(
+    200,
+    {},
+    json.dumps(
+        {
+            "swagger": "2.0",
+            "basePath": "/api/1",
+            "paths": {"/unrelated/": {"get": {}}},
+        }
+    ).encode(),
+)
+
+
+@pytest.mark.parametrize("entry", ["detail", "site", "stream", "redirect", "v2"])
+def test_sync_native_entry_points_share_route_admission(entry: str) -> None:
+    response = (
+        _ABSENT_SURFACE
+        if entry != "v2"
+        else RuntimeResponse(200, {}, _ABSENT_SURFACE.body.replace(b"/api/1", b"/api/2"))
+    )
+    transport = SurfaceTransport(response)
+    with SyncUDataClient(transport, declared_udata_profile(), origin="http://127.0.0.1:5640") as client:
+        calls = {
+            "detail": lambda: client.datasets.get("private-id"),
+            "site": client.root_profile.get,
+            "v2": client.datasets.list_v2,
+            "stream": lambda: client.root_profile.datasets_csv(sink=lambda _: None),
+            "redirect": lambda: client.resources.redirect("private-id"),
+        }
+        with pytest.raises(UnsupportedCapabilityError) as raised:
+            calls[entry]()
+        assert "private-id" not in str(raised.value.metadata)
+    assert len(transport.requests) == 2
+
+
+class AsyncSurfaceTransport:
+    def __init__(self, surface: RuntimeResponse | Exception) -> None:
+        self.router = SurfaceTransport(surface)
+
+    async def send(self, request: RuntimeRequest) -> RuntimeResponse:
+        return self.router.send(request)
+
+    async def aclose(self) -> None:
+        self.router.close()
+
+
+@pytest.mark.parametrize("entry", ["detail", "site", "stream", "redirect", "v2"])
+def test_async_native_entry_points_share_route_admission(entry: str) -> None:
+    response = (
+        _ABSENT_SURFACE
+        if entry != "v2"
+        else RuntimeResponse(200, {}, _ABSENT_SURFACE.body.replace(b"/api/1", b"/api/2"))
+    )
+    transport = AsyncSurfaceTransport(response)
+    client = AsyncUDataClient(transport, declared_udata_profile(), origin="http://127.0.0.1:5640")
+
+    async def run() -> None:
+        calls = {
+            "detail": lambda: client.datasets.get("private-id"),
+            "site": client.root_profile.get,
+            "v2": client.datasets.list_v2,
+            "stream": lambda: client.root_profile.datasets_csv(sink=lambda _: None),
+            "redirect": lambda: client.resources.redirect("private-id"),
+        }
+        with pytest.raises(UnsupportedCapabilityError):
+            await calls[entry]()
+        await client.aclose()
+
+    asyncio.run(run())
+    assert len(transport.router.requests) == 2
+
+
+def test_surface_cache_expires_and_refreshes_without_caller_credentials() -> None:
+    from datasluice.domain.catalog.auth import UDataCredential
+
+    now = [0.0]
+    transport = RecordingTransport(site_version="17.16.0")
+    client = SyncUDataClient(
+        transport,
+        declared_udata_profile(),
+        origin="http://127.0.0.1:5640",
+        credentials=UDataCredential(api_key="caller-secret"),
+        capability_cache_ttl=10,
+        clock=lambda: now[0],
+    )
+    for _ in range(2):
+        client.datasets_list(*_datasets_operation())
+
+    def probes() -> list[RuntimeRequest]:
+        return [request for request in transport.requests if request.url.endswith("/swagger.json")]
+
+    assert len(probes()) == 1
+    now[0] = 10.0
+    client.datasets_list(*_datasets_operation())
+    assert len(probes()) == 2
+    client.invalidate()
+    client.datasets_list(*_datasets_operation())
+    assert len(probes()) == 3
+    assert all(not request.headers for request in probes())
+    client.close()
+
+
+def test_undeclared_operation_is_rejected_before_probes_or_credential_resolution() -> None:
+    from datasluice.contracts.catalog.protocols import CatalogOperationGuard, CatalogOperationRequest
+    from datasluice.domain.catalog.operations import OperationId
+
+    class CredentialProvider:
+        def resolve(self) -> object:
+            raise AssertionError("An undeclared operation must not resolve credentials.")
+
+    transport = RecordingTransport(site_version="17.16.0")
+    client = SyncUDataClient(
+        transport,
+        declared_udata_profile(),
+        origin="http://127.0.0.1:5640",
+        credentials=CredentialProvider(),
+    )
+    unknown = OperationId("udata", "api-v1", "new-deployment-route")
+    with pytest.raises(UnsupportedCapabilityError):
+        client.datasets_list(CatalogOperationRequest(unknown, {}), CatalogOperationGuard(unknown))
+    assert not transport.requests
+
+
+def test_slow_swagger_probe_exhausts_the_operation_deadline_before_dispatch() -> None:
+    from datasluice.domain.catalog.resilience import TimeBudget
+    from datasluice.errors.catalog import BudgetExhaustedError
+
+    now = [0.0]
+
+    class SlowSurfaceTransport(RecordingTransport):
+        def send(self, request: RuntimeRequest) -> RuntimeResponse:
+            response = super().send(request)
+            if request.url.endswith("/swagger.json"):
+                now[0] = 2.0
+            return response
+
+    transport = SlowSurfaceTransport(site_version="17.16.0")
+    client = SyncUDataClient(
+        transport,
+        declared_udata_profile(),
+        origin="http://127.0.0.1:5640",
+        budget=TimeBudget(1, 1, 1, 1),
+        clock=lambda: now[0],
+    )
+    with pytest.raises(BudgetExhaustedError):
+        client.datasets_list(*_datasets_operation())
+    assert len(transport.requests) == 2

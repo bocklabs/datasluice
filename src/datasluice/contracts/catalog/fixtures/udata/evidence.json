@@ -383,7 +383,7 @@
     "dockerfile_sha256": "8bb5a8bc32b3c78a5b359b5b567155df5f936b4818eea90d181312814fc0fb28",
     "controlled_test_sha256": "4ead8dff2d9fd8e9925aaab657dee57bb12f155443d9f6e2973f50a0f3e23c21",
     "wheel_test_sha256": "35f595d47c0b01d1419653135dc3f15d561f6e49e882edde6274c30bd05da318",
-    "wheel_tracer_sha256": "0c01d90ec1c60518641d357d42e22b9a39cd09d066b9b9e9380427fc7bf75171",
+    "wheel_tracer_sha256": "5b6a4f6c8fd99fc0ec3b3fbf1b0a105870c4d1dc55dd713bdb73e8cc560bcb39",
     "test_ids": [
       "test_controlled_dataservice_reads_match_raw_routes_in_both_modes",
       "test_controlled_dataservice_lifecycle_matches_raw_routes_and_cleans_up"
@@ -402,7 +402,7 @@
       "async"
     ],
     "recapture_note": "Re-executed both dataservice controlled tests after review fixes. Seven read routes match raw status or bounded shape in sync and async. Each of nine assigned mutations compares typed status and full normalized payload against a separately created raw twin in both modes; only per-record identity and server timestamps are normalized. Creation omits optional base_api_url and uses restricted access audiences. Update clears description and nullable references; deleted_at/archived_at null restores deleted records. Canonical-ID and slug RDF redirects match raw status in both modes. Cleanup protects all known created IDs from the first assertion, attempts each independently, and preserves the original failure. A deliberately incorrect async update payload was rejected. Only sanitized status and shape metadata retained. WR-03 recapture retains caller-controlled archived_at timestamp and null in differential equality, asserts archive and restoration in both modes, and rejects mismatched archive state in a RED/GREEN comparator regression.",
-    "unit_test_sha256": "7036530bcfbe2a0d1bda67572cb741be4320cfdb9eb685bce5b30435785eb4bd",
+    "unit_test_sha256": "db1ef9d328e0dd21e1059d9c816e17513ee953f76580bff0aef59a89a571b591",
     "branch_discrimination": [
       "follower-verb-inversion-detected",
       "rdf-format-validation-removal-detected",
@@ -458,8 +458,8 @@
     "dockerfile_sha256": "8bb5a8bc32b3c78a5b359b5b567155df5f936b4818eea90d181312814fc0fb28",
     "controlled_test_sha256": "4ead8dff2d9fd8e9925aaab657dee57bb12f155443d9f6e2973f50a0f3e23c21",
     "wheel_test_sha256": "35f595d47c0b01d1419653135dc3f15d561f6e49e882edde6274c30bd05da318",
-    "wheel_tracer_sha256": "0c01d90ec1c60518641d357d42e22b9a39cd09d066b9b9e9380427fc7bf75171",
-    "unit_test_sha256": "9696998a0231707e5e1e375dd02c29d3d28f078a8a1c119070a20addd8702120",
+    "wheel_tracer_sha256": "5b6a4f6c8fd99fc0ec3b3fbf1b0a105870c4d1dc55dd713bdb73e8cc560bcb39",
+    "unit_test_sha256": "411049f0464e67285698025f834d66557cdd5507938783292c54bf18c5adf9ec",
     "test_ids": [
       "test_controlled_topic_reads_match_raw_routes_in_both_modes",
       "test_controlled_topic_lifecycle_matches_raw_routes_and_cleans_up"
@@ -512,8 +512,8 @@
     "dockerfile_sha256": "8bb5a8bc32b3c78a5b359b5b567155df5f936b4818eea90d181312814fc0fb28",
     "controlled_test_sha256": "4ead8dff2d9fd8e9925aaab657dee57bb12f155443d9f6e2973f50a0f3e23c21",
     "wheel_test_sha256": "35f595d47c0b01d1419653135dc3f15d561f6e49e882edde6274c30bd05da318",
-    "wheel_tracer_sha256": "0c01d90ec1c60518641d357d42e22b9a39cd09d066b9b9e9380427fc7bf75171",
-    "unit_test_sha256": "63e3063990ff7329dfa10bee02e25f8fc4bd10585a6d63881621feda243709f3",
+    "wheel_tracer_sha256": "5b6a4f6c8fd99fc0ec3b3fbf1b0a105870c4d1dc55dd713bdb73e8cc560bcb39",
+    "unit_test_sha256": "a4146f214bd6552adb5f7cc4ea523c9301c92592fb9c2b560624b319aa7d24ec",
     "test_ids": [
       "test_controlled_contact_visualization_reads_match_raw_routes_in_both_modes",
       "test_controlled_contact_visualization_lifecycle_matches_raw_routes_and_cleans_up"
@@ -566,9 +566,9 @@
     "dockerfile_sha256": "8bb5a8bc32b3c78a5b359b5b567155df5f936b4818eea90d181312814fc0fb28",
     "controlled_test_sha256": "4ead8dff2d9fd8e9925aaab657dee57bb12f155443d9f6e2973f50a0f3e23c21",
     "wheel_test_sha256": "35f595d47c0b01d1419653135dc3f15d561f6e49e882edde6274c30bd05da318",
-    "wheel_tracer_sha256": "0c01d90ec1c60518641d357d42e22b9a39cd09d066b9b9e9380427fc7bf75171",
+    "wheel_tracer_sha256": "5b6a4f6c8fd99fc0ec3b3fbf1b0a105870c4d1dc55dd713bdb73e8cc560bcb39",
     "unit_test_sha256": "95a3578a33258b9dc376cc98513e9f6d9c0f31336fa296f6c2490d7fec1d93cc",
-    "unit_state_test_sha256": "9f51f9220e42fb2da842b839503b883eeba0e24ac9371830f932edb8e13a6029",
+    "unit_state_test_sha256": "d84b3066cce159006275b55903db45736adc6b164e81726dee7880aa90837a96",
     "test_ids": [
       "test_controlled_jobs_reads_match_raw_routes_in_both_modes",
       "test_controlled_jobs_lifecycle_matches_raw_routes_and_cleans_up"
@@ -621,9 +621,9 @@
     "dockerfile_sha256": "8bb5a8bc32b3c78a5b359b5b567155df5f936b4818eea90d181312814fc0fb28",
     "controlled_test_sha256": "4ead8dff2d9fd8e9925aaab657dee57bb12f155443d9f6e2973f50a0f3e23c21",
     "wheel_test_sha256": "35f595d47c0b01d1419653135dc3f15d561f6e49e882edde6274c30bd05da318",
-    "wheel_tracer_sha256": "0c01d90ec1c60518641d357d42e22b9a39cd09d066b9b9e9380427fc7bf75171",
-    "unit_test_sha256": "32440e410ee7a0f12ea65f53d5305fe1023f2b8c2e3ca690728022fa19d0b529",
-    "unit_state_test_sha256": "713eceae8c40fb7beedbfdbaa868d28d41941364048ed9a5413c1b96b04fd4b7",
+    "wheel_tracer_sha256": "5b6a4f6c8fd99fc0ec3b3fbf1b0a105870c4d1dc55dd713bdb73e8cc560bcb39",
+    "unit_test_sha256": "df2a23d1ec36a99f1b237f6df3b43a1d26a621dcfc04524c794b46fd705b7bbe",
+    "unit_state_test_sha256": "e13ba39f434596f33a7ff8457c8f931c122eefd5b90cbd3dde75ba58561eb644",
     "test_ids": [
       "test_controlled_harvest_reads_match_raw_routes_in_both_modes",
       "test_controlled_harvest_create_refusal_matches_raw_in_both_modes"
@@ -670,7 +670,7 @@
     "dockerfile_sha256": "8bb5a8bc32b3c78a5b359b5b567155df5f936b4818eea90d181312814fc0fb28",
     "controlled_test_sha256": "4ead8dff2d9fd8e9925aaab657dee57bb12f155443d9f6e2973f50a0f3e23c21",
     "wheel_test_sha256": "35f595d47c0b01d1419653135dc3f15d561f6e49e882edde6274c30bd05da318",
-    "wheel_tracer_sha256": "0c01d90ec1c60518641d357d42e22b9a39cd09d066b9b9e9380427fc7bf75171",
+    "wheel_tracer_sha256": "5b6a4f6c8fd99fc0ec3b3fbf1b0a105870c4d1dc55dd713bdb73e8cc560bcb39",
     "unit_test_sha256": "a1b042296957d75bf8bceafaa4e824db977d58fcf012386c8e3d7911240e8c03",
     "test_ids": [
       "test_controlled_transfers_state_machine_matches_raw_routes_and_cleans_up"
@@ -717,9 +717,9 @@
     "dockerfile_sha256": "8bb5a8bc32b3c78a5b359b5b567155df5f936b4818eea90d181312814fc0fb28",
     "controlled_test_sha256": "4ead8dff2d9fd8e9925aaab657dee57bb12f155443d9f6e2973f50a0f3e23c21",
     "wheel_test_sha256": "35f595d47c0b01d1419653135dc3f15d561f6e49e882edde6274c30bd05da318",
-    "wheel_tracer_sha256": "0c01d90ec1c60518641d357d42e22b9a39cd09d066b9b9e9380427fc7bf75171",
+    "wheel_tracer_sha256": "5b6a4f6c8fd99fc0ec3b3fbf1b0a105870c4d1dc55dd713bdb73e8cc560bcb39",
     "unit_test_sha256": "d6d33481701f435862fe5f438763c9f6d110d4144c23a5207a76c2fec1845d73",
-    "unit_probe_test_sha256": "9323de760a7bd69d1771d6794873d44b89c9b7cf4f4508ea3b50f2303229d4ee",
+    "unit_probe_test_sha256": "7f2c8b58f711f54dc78a8ab45bb1e98d44b4ae2c2187acdb5641fa46a37c5d0a",
     "test_ids": [
       "test_controlled_extensions_and_probes_match_raw_routes_in_both_modes"
     ],

@@ -56,6 +56,7 @@ from tests.helpers.udata_test_support import (
     async_client,
     async_route_table,
     mutation_policy,
+    swagger_response,
     sync_client,
     sync_route_table,
     thawed,
@@ -942,6 +943,8 @@ class _InterruptingRoutes:
         self.aclose_count = 0
 
     def _respond(self, request: RuntimeRequest) -> RuntimeResponse:
+        if response := swagger_response(request, {_LIST_ROUTE: None, _DELETE_ROUTE: None}):
+            return response
         self.requests.append(request)
         key = (request.method, request.url)
         if self.armed and key in {_LIST_ROUTE, _DELETE_ROUTE}:
@@ -1354,6 +1357,8 @@ def test_image_upload_cancellation_finishes_transport_and_keeps_cancelled_receip
                 self.uploads = 0
 
             async def send(self, request: RuntimeRequest) -> RuntimeResponse:
+                if response := swagger_response(request, {("POST", "/api/1/visualizations/viz-1/image/"): None}):
+                    return response
                 if request.url.endswith("/api/1/site/"):
                     return RuntimeResponse(200, {}, json.dumps(UDATA_SITE).encode())
                 self.uploads += 1

@@ -41,6 +41,7 @@ from datasluice.domain.catalog.redaction import REDACTED
 from datasluice.domain.catalog.safety import ConcurrencyPolicy, ConfirmationPolicy, MutationPolicy
 from datasluice.errors.catalog import CatalogValidationError, ForbiddenError, NativeCatalogError
 from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse
+from tests.helpers.udata_test_support import swagger_response
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -57,6 +58,8 @@ class _Router:
         self.requests: list[RuntimeRequest] = []
 
     def send(self, request: RuntimeRequest) -> RuntimeResponse:
+        if response := swagger_response(request, self.routes):
+            return response
         self.requests.append(request)
         value = self.routes[(request.method, request.url)]
         status, payload = value if isinstance(value, tuple) else (200, value)
@@ -73,6 +76,8 @@ class _AsyncRouter:
         self.requests: list[RuntimeRequest] = []
 
     async def send(self, request: RuntimeRequest) -> RuntimeResponse:
+        if response := swagger_response(request, self.routes):
+            return response
         self.requests.append(request)
         value = self.routes[(request.method, request.url)]
         status, payload = value if isinstance(value, tuple) else (200, value)

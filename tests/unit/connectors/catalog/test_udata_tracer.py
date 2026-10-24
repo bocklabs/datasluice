@@ -153,6 +153,7 @@ def test_injected_credential_attaches_only_to_the_dataset_read() -> None:
     client.datasets_list(operation, guard)
 
     assert transport.requests[0].headers == {}
+    assert transport.requests[1].headers == {}
     assert transport.requests[2].headers.get("X-API-KEY") == "secret-key"
 
 
@@ -225,6 +226,7 @@ def test_async_tracer_probes_anonymously_reads_once_and_owns_closure() -> None:
     asyncio.run(run())
 
     assert owned.requests[0].headers == {}
+    assert owned.requests[1].headers == {}
     assert owned.requests[2].headers.get("X-API-KEY") == "secret-key"
     assert owned.aclose_count == 1
 

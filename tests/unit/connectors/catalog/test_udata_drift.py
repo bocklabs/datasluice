@@ -252,7 +252,7 @@ def test_t03_mismatched_version_is_incompatible_and_skips_every_later_read() -> 
     site, dataset, topics = report.records
     assert site.outcome == drift.INCOMPATIBLE
     assert site.metadata["observed_version"] == "18.0.0"
-    assert site.metadata["pinned_version"] == PINNED_UDATA_VERSION
+    assert site.metadata["supported_range"] == ">=17.0.0,<18.0.0"
     assert (dataset.outcome, topics.outcome) == (drift.SKIPPED, drift.SKIPPED)
     assert transport.urls == [_SITE_URL]
 
