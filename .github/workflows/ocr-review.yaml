@@ -23,15 +23,6 @@ jobs:
     timeout-minutes: 600
     if: github.event.pull_request.draft == false && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.type != 'Bot'
     steps:
-      - name: Check OCR configuration
-        env:
-          OCR_LLM_URL: ${{ secrets.OCR_LLM_URL }}
-          OCR_LLM_AUTH_TOKEN: ${{ secrets.OCR_LLM_AUTH_TOKEN }}
-        run: |
-          if [ -z "$OCR_LLM_URL" ] || [ -z "$OCR_LLM_AUTH_TOKEN" ]; then
-            echo "::error::OCR_LLM_URL and OCR_LLM_AUTH_TOKEN must be configured before this workflow can review."
-            exit 1
-          fi
 
       - name: Setup Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -39,20 +30,18 @@ jobs:
           node-version: 24
 
       - name: Run OpenCodeReview
-        uses: alibaba/open-code-review@fabbdb296b0d97e2140ada8d54ca7d6d6d1d7ad4 # v1.12.13
+        uses: alibaba/open-code-review@375f64cd6f67a48a135da83cfcf59c52669a09cb # v1.13.3
         with:
           llm_url: ${{ secrets.OCR_LLM_URL }}
           llm_auth_token: ${{ secrets.OCR_LLM_AUTH_TOKEN }}
           llm_model: ${{ secrets.OCR_LLM_MODEL }}
           llm_use_anthropic: ${{ secrets.OCR_LLM_USE_ANTHROPIC }}
           llm_reasoning_effort: max
-          max_tokens_budget: '1000000'
-          review_concurrency: '4'
           language: 'English'
           github_token: ${{ secrets.GITHUB_TOKEN }}
           sticky_summary: 'true'
           incremental: 'true'
-          incremental_overlap_threshold: '0.8'
+          checkpoint_range: 'true'
           upload_artifacts: 'false'
 
           background: >-

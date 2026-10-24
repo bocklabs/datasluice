@@ -4,7 +4,7 @@
     "config:recommended",
     "helpers:pinGitHubActionDigests",
     ":configMigration",
-    "schedule:weekly"
+    "schedule:daily"
   ],
   "labels": [
     "dependencies"
@@ -23,6 +23,11 @@
   "minimumReleaseAge": "7 days",
   "packageRules": [
     {
+      "description": "Lock file maintenance rewrites the whole lockfile, so the age gate would keep its branch pending forever.",
+      "matchUpdateTypes": ["lockFileMaintenance"],
+      "minimumReleaseAge": null
+    },
+    {
       "matchManagers": ["github-actions"],
       "matchUpdateTypes": ["pin",
         "digest",
@@ -36,13 +41,6 @@
       "matchUpdateTypes": ["minor", "patch"],
       "groupName": "Python minor and patch updates",
       "automerge": true
-    },
-    {
-      "description": "The Airflow provider is tested against a locally built core wheel; the core package is not published yet.",
-      "matchManagers": ["pep621"],
-      "matchFileNames": ["providers/apache-airflow/pyproject.toml"],
-      "matchPackageNames": ["datasluice"],
-      "enabled": false
     },
     {
       "description": "Vendored upstream manifests under dev/ are frozen evidence for the local connector stacks; updates would desync them from the tracked upstream projects.",
