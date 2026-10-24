@@ -1302,10 +1302,12 @@ class _RequestAttempt:
         request = replace(self.request, body=form_body()) if form_body is not None else self.request
         if request.deadline is not None:
             request.deadline.assert_dispatchable()
+        completed = False
         try:
             yield request
             if request.deadline is not None:
                 request.deadline.assert_dispatchable()
+            completed = True
         except BudgetExhaustedError as error:
             _settle_dataset_budget_error(error, request, self.response)
             raise
@@ -1314,10 +1316,12 @@ class _RequestAttempt:
             after = self.client._breakers.record_transport_failure(self.key)
             self.client._emit_breaker_change(self.owning_id, before.open, after.open)
             raise
-        assert self.response is not None
-        after = self.client._breakers.record_response(self.key, self.response.status_code)
-        self.recorded = True
-        self.client._emit_breaker_change(self.owning_id, before.open, after.open)
+        finally:
+            if completed:
+                assert self.response is not None
+                after = self.client._breakers.record_response(self.key, self.response.status_code)
+                self.recorded = True
+                self.client._emit_breaker_change(self.owning_id, before.open, after.open)
 
     def release_trial(self) -> None:
         if not self.recorded:

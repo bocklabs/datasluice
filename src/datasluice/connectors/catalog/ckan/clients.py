@@ -521,8 +521,10 @@ class _DispatchState:
     @contextmanager
     def outcome(self, deadline: DeadlineMonitor) -> Iterator[None]:
         client = self.client
+        completed = False
         try:
             yield
+            completed = True
         except BudgetExhaustedError:
             client._emit(
                 self.owning_id,
@@ -533,12 +535,14 @@ class _DispatchState:
         except Exception:
             client._emit(self.owning_id, "failed", retry_count=max(0, self.attempts - 1))
             raise
-        client._emit(
-            self.owning_id,
-            "succeeded",
-            retry_count=max(0, self.attempts - 1),
-            budget_usage=max(0.0, client._budget.total - deadline.remaining()),
-        )
+        finally:
+            if completed:
+                client._emit(
+                    self.owning_id,
+                    "succeeded",
+                    retry_count=max(0, self.attempts - 1),
+                    budget_usage=max(0.0, client._budget.total - deadline.remaining()),
+                )
 
 
 class SyncCKANClient(_CKANClientState):
