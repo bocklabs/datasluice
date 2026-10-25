@@ -1970,6 +1970,39 @@ def test_jsonld_numeric_overflow_returns_bounded_native_error(asynchronous: bool
     assert raised.value.__context__ is None
 
 
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.parametrize("method", ["get", "jsonld_context"])
+@pytest.mark.parametrize("depth", [600, 2000, 12000])
+def test_root_nested_json_returns_bounded_native_error(asynchronous: bool, method: str, depth: int) -> None:
+    url = _SITE_URL if method == "get" else f"{_SITE_URL}context.jsonld"
+    body = b'{"id":"site","title":"uData","version":"17.6.0","feed_size":0,"keywords":[],"metrics":{},'
+    body += b'"response-controlled-field":' + b"[" * depth + b"0" + b"]" * depth + b"}"
+    media_type = "application/json" if method == "get" else "application/ld+json"
+    response = _json_response(206, body, {"Content-Type": media_type})
+    with pytest.raises(NativeCatalogError) as raised:
+        if asynchronous:
+            async_transport, async_client = _async_client(_routes())
+
+            async def run() -> None:
+                async with async_client:
+                    await async_client.site_version()
+                    async_transport.routes[("GET", url)] = response
+                    await getattr(async_client.root_profile, method)()
+
+            asyncio.run(run())
+        else:
+            transport, client = _sync_client(_routes())
+            with client:
+                client.site_version()
+                transport.routes[("GET", url)] = response
+                getattr(client.root_profile, method)()
+    assert raised.value.operation == wire.ROOT_OPERATION
+    assert raised.value.status_code == 206
+    assert "response-controlled-field" not in str(raised.value)
+    assert raised.value.__cause__ is None
+    assert raised.value.__context__ is None
+
+
 @pytest.mark.parametrize("fmt", ("rdf", "owl"))
 def test_rdf_xml_aliases_are_supported(fmt: str) -> None:
     assert wire.media_type_for_format(fmt) == "application/rdf+xml"

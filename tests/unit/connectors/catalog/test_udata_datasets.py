@@ -1287,6 +1287,74 @@ def test_wr06_malformed_documented_dataset_fields_fail_with_route_identity() -> 
         wire.parse_suggestions([{"id": "abc"}], operation="udata/api-v1.suggest-datasets")
 
 
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.parametrize("native", [False, True])
+@pytest.mark.parametrize("depth", [2000, 12000])
+def test_dataset_nested_json_returns_bounded_native_error(asynchronous: bool, native: bool, depth: int) -> None:
+    body = b'{"data":[{"id":"abc","extras":{"response-controlled-field":' + b"[" * depth
+    body += b"0" + b"]" * depth + b"}}]}"
+    url = "http://127.0.0.1:5640/api/1/datasets/" + ("?page=1&page_size=20" if native else "")
+    routes = _site_first({("GET", url): (206, body)})
+    operation_id = next(op for op in declared_udata_profile().operations if op.method == "list-datasets")
+    request = CatalogOperationRequest(operation_id=operation_id)
+    guard = CatalogOperationGuard(operation_id=operation_id)
+    with pytest.raises(NativeCatalogError) as raised:
+        if asynchronous:
+
+            async def run() -> None:
+                async with _async_client(routes) as client:
+                    if native:
+                        await client.datasets.list()
+                    else:
+                        await client.datasets_list(request, guard)
+
+            asyncio.run(run())
+        else:
+            with _sync_client(routes) as client:
+                if native:
+                    client.datasets.list()
+                else:
+                    client.datasets_list(request, guard)
+    assert raised.value.operation == str(operation_id)
+    assert raised.value.status_code == 206
+    assert "response-controlled-field" not in str(raised.value)
+    assert raised.value.__cause__ is None
+    assert raised.value.__context__ is None
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.parametrize("field,value", [("created_at", "not-an-instant"), ("last_modified", "2026-99-99T25:61:61Z")])
+def test_dataset_malformed_timestamp_is_rejected(asynchronous: bool, field: str, value: str) -> None:
+    routes = _site_first({("GET", "http://127.0.0.1:5640/api/1/datasets/abc/"): {**_dataset_doc(), field: value}})
+    with pytest.raises(CatalogValidationError) as raised:
+        if asynchronous:
+
+            async def run() -> None:
+                async with _async_client(routes) as client:
+                    await client.datasets.get("abc")
+
+            asyncio.run(run())
+        else:
+            with _sync_client(routes) as client:
+                client.datasets.get("abc")
+    assert raised.value.operation == "udata/api-v1.get-dataset"
+    assert value not in str(raised.value)
+    assert raised.value.__cause__ is None
+    assert raised.value.__context__ is None
+
+
+@pytest.mark.parametrize(
+    "value", [None, "2026-10-25T10:11:12.123Z", "2026-10-25T10:11:12+02:00", "2026-10-25T10:11:12"]
+)
+def test_dataset_timestamp_validation_preserves_wire_values_and_presence(value: str | None) -> None:
+    payload = {**_dataset_doc(), "created_at": value, "last_modified": value}
+    record = wire.parse_dataset_detail(payload)
+    assert record.payload["created_at"] == value
+    assert record.payload["last_modified"] == value
+    assert "created_at" not in wire.parse_dataset_detail(_dataset_doc()).payload
+    assert "last_modified" not in wire.parse_dataset_detail(_dataset_doc()).payload
+
+
 def test_wr07_nested_extras_inputs_and_results_are_json_safe_and_immutable() -> None:
     update = DatasetExtrasUpdate({"nested": {"items": [1, 2]}})
     assert update.payload() == {"nested": {"items": [1, 2]}}

@@ -1679,7 +1679,7 @@ class _UDataClientCore(metaclass=_ImmutableClientType):
         invalid_payload = False
         try:
             payload = json.loads(response.body, parse_constant=_reject_nonfinite_json, parse_float=_finite_json_float)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, RecursionError):
             invalid_payload = True
             payload = None
         if invalid_payload:
@@ -1794,19 +1794,21 @@ class _UDataClientCore(metaclass=_ImmutableClientType):
                     retry_after=response.retry_after,
                 )
             )
-        invalid_payload = False
         try:
             payload = json.loads(response.body, parse_constant=_reject_nonfinite_json, parse_float=_finite_json_float)
-        except (TypeError, ValueError):
-            invalid_payload = True
-            payload = None
-        if invalid_payload:
-            raise NativeCatalogError(
-                _INVALID_JSON_RESULT,
+            return shape_dataset_page(
+                parse_native_page(payload, operation=str(owning_id)),
                 operation=str(owning_id),
-                platform=PLATFORM.value,
+                status_code=response.status_code,
             )
-        return shape_dataset_page(parse_native_page(payload, operation=str(owning_id)), operation=str(owning_id))
+        except (TypeError, ValueError, RecursionError):
+            pass
+        raise NativeCatalogError(
+            _INVALID_JSON_RESULT,
+            operation=str(owning_id),
+            platform=PLATFORM.value,
+            status_code=response.status_code,
+        )
 
     def capability(self, operation_id: str) -> str:
         """Return the cached effective classification without dispatching transport I/O."""

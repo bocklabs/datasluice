@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from datetime import datetime
 from typing import TYPE_CHECKING, cast
 from urllib.parse import quote, urlencode
 
@@ -15,7 +16,7 @@ from datasluice.connectors.catalog.udata.wire._text_document import (
 )
 from datasluice.domain.catalog.ids import CatalogId, ResourceKind
 from datasluice.domain.catalog.models import MappingRecord, NativeRecord, _freeze_json, redact_record_payload
-from datasluice.errors.catalog import CatalogValidationError
+from datasluice.errors.catalog import CatalogValidationError, NativeCatalogError
 
 if TYPE_CHECKING:
     from datasluice.connectors.catalog.udata.models.datasets import (
@@ -253,12 +254,24 @@ def _validate_nested_list_fields(
                     )
 
 
-def _validate_dataset_fields(payload: Mapping[str, object], *, operation: str, detail: bool) -> None:
-    _validate_required_dataset_fields(payload, operation=operation, detail=detail)
-    for field, value in payload.items():
-        _validate_dataset_field(field, value, operation=operation)
-        _validate_json_value(value, operation=operation, path=field)
-    _validate_dataset_nested_fields(payload, operation=operation)
+def _validate_dataset_fields(
+    payload: Mapping[str, object], *, operation: str, detail: bool, status_code: int | None = None
+) -> None:
+    try:
+        _validate_required_dataset_fields(payload, operation=operation, detail=detail)
+        for field, value in payload.items():
+            _validate_dataset_field(field, value, operation=operation)
+            _validate_json_value(value, operation=operation, path=field)
+        _validate_dataset_nested_fields(payload, operation=operation)
+        return
+    except RecursionError:
+        pass
+    raise NativeCatalogError(
+        "The uData dataset response exceeds the supported JSON nesting.",
+        operation=operation,
+        platform=PLATFORM.value,
+        status_code=status_code,
+    )
 
 
 def _validate_required_dataset_fields(payload: Mapping[str, object], *, operation: str, detail: bool) -> None:
@@ -285,6 +298,13 @@ def _validate_dataset_field(field: str, value: object, *, operation: str) -> Non
 def _validate_dataset_optional_string(field: str, value: object, *, operation: str) -> None:
     if value is not None and (not isinstance(value, str) or not value):
         raise _invalid_field(field, operation, "a non-empty string or null")
+    if field in {"created_at", "last_modified"} and isinstance(value, str):
+        try:
+            datetime.fromisoformat(value)
+            return
+        except ValueError:
+            pass
+        raise _invalid_field(field, operation, "an ISO date-time string or null")
 
 
 def _validate_dataset_boolean(field: str, value: object, *, operation: str) -> None:
@@ -408,7 +428,9 @@ def v2_extras_delete_request(
     )
 
 
-def parse_dataset_detail(payload: object, *, operation: str = _DATASETS_OPERATION_ID) -> NativeRecord:
+def parse_dataset_detail(
+    payload: object, *, operation: str = _DATASETS_OPERATION_ID, status_code: int | None = None
+) -> NativeRecord:
     """Decode one full v1/v2 dataset document into a native record.
 
     The documented core fields (``id``, ``title``, ``slug``) are type-checked; unknown portal fields are retained in the
@@ -422,7 +444,7 @@ def parse_dataset_detail(payload: object, *, operation: str = _DATASETS_OPERATIO
             platform=PLATFORM.value,
             safe_action=_PINNED_SOURCE_ORACLE_ACTION,
         )
-    _validate_dataset_fields(payload, operation=operation, detail=True)
+    _validate_dataset_fields(payload, operation=operation, detail=True, status_code=status_code)
     return _native_dataset(payload)
 
 
