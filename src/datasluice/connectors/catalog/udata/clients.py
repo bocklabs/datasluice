@@ -1745,6 +1745,8 @@ class _UDataClientCore(metaclass=_ImmutableClientType):
         credential_scope: str = "anonymous",
         accept_status: Callable[[int], bool] | None = None,
     ) -> None:
+        if accept_status is not None and accept_status(response.status_code):
+            return
         if owning_id.service == "oauth" and response.status_code in {404, 405}:
             raise UnsupportedCapabilityError(
                 "The uData deployment does not expose this OAuth operation.",
@@ -1755,8 +1757,6 @@ class _UDataClientCore(metaclass=_ImmutableClientType):
                 safe_action="Use an OAuth operation exposed by this deployment.",
             )
         if redirect_mode and response.status_code in {301, 302, 303, 307, 308}:
-            return
-        if accept_status is not None and accept_status(response.status_code):
             return
         if 200 <= response.status_code < 300:
             return

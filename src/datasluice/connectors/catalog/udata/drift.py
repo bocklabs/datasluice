@@ -34,7 +34,7 @@ from datasluice.runtime.transport.base import RedirectPolicy, RuntimeRequest, Ru
 if TYPE_CHECKING:
     from datasluice.domain.catalog.observability import TLSPolicy
 
-DRIFT_SCHEMA_VERSION: Final = "udata-drift/1"
+DRIFT_SCHEMA_VERSION: Final = "udata-drift/2"
 PINNED_UDATA_VERSION: Final = declared_udata_profile().profile_version
 DRIFT_OPERATION: Final = "udata/api-v1.public-drift-read"
 
@@ -612,7 +612,7 @@ def _version_record(
             ),
             INCOMPATIBLE,
         )
-    metadata["version_state"] = "exact"
+    metadata["version_state"] = "supported"
     metadata["observed_version"] = observed.version
     expected = set(operation.expected_envelope_keys)
     if isinstance(payload, Mapping) and {str(key) for key in payload} == expected:
@@ -624,7 +624,7 @@ def _version_record(
                 outcome=MATCHED,
                 status_code=response.status_code,
                 envelope_keys=envelope_keys,
-                version_state="exact",
+                version_state="supported",
                 detail=MATCHED_DETAIL,
                 metadata=metadata,
             ),
@@ -638,7 +638,7 @@ def _version_record(
             outcome=DRIFTED,
             status_code=response.status_code,
             envelope_keys=envelope_keys,
-            version_state="exact",
+            version_state="supported",
             detail=DRIFTED_DETAIL,
             metadata=metadata,
         ),

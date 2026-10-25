@@ -223,13 +223,16 @@ def test_t01_explicitly_empty_target_sequence_is_refused_before_dispatch() -> No
     assert transport.requests == []
 
 
-def test_t03_exact_pinned_version_classifies_every_allowlisted_read_as_matched() -> None:
-    transport = RecordingTransport(_compatible_routes())
+@pytest.mark.parametrize("version", ["17.6.0", "17.16.0"])
+def test_t03_supported_version_classifies_every_allowlisted_read_as_matched(version: str) -> None:
+    transport = RecordingTransport({**_compatible_routes(), _SITE_URL: _site_body(version)})
 
     report = run_udata_drift([_target()], transport=transport, now=lambda: _FIXED_NOW)
 
     assert _outcomes(report) == [drift.MATCHED] * 3
-    assert report.schema_version == DRIFT_SCHEMA_VERSION
+    assert report.schema_version == "udata-drift/2"
+    assert report.records[0].metadata["version_state"] == "supported"
+    assert report.records[0].metadata["observed_version"] == version
     assert report.profile_version == PINNED_UDATA_VERSION
     assert report.generated_at == _FIXED_NOW.isoformat()
     assert report.advisory_only is True

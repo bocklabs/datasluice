@@ -78,7 +78,7 @@ def parse_site_version(payload: object) -> SiteVersion:
         payload: The decoded JSON body of ``GET /api/1/site/``.
 
     Returns:
-        The bounded site evidence when the payload proves the exact version.
+        The bounded site evidence when the payload identifies a supported version.
 
     Raises:
         UDataVersionError: When the version key is missing, malformed, or

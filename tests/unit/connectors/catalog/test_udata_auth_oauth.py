@@ -326,23 +326,20 @@ def test_form_bodies_keep_their_declared_media_type() -> None:
     assert router.requests[-1].headers["Content-Type"] == wire.FORM_MEDIA_TYPE
 
 
-def test_oauth_error_returns_the_stock_missing_template_status() -> None:
-    """The 17.6.0 image ships no api/oauth_error.html, so stock answers 500.
-
-    The typed surface exists to report that page, so the status must be returned rather than raised past the model.
-    """
-    router = html_sync_route_table(declared_routes(("GET", "/oauth/error", 500, None), site=SITE))
+@pytest.mark.parametrize("status", [404, 500])
+def test_oauth_error_returns_the_modelled_error_page_status(status: int) -> None:
+    router = html_sync_route_table(declared_routes(("GET", "/oauth/error", status, None), site=SITE))
     with sync_client(router, CREDENTIAL) as client:
         outcome = client.auth_oauth.oauth_error()
-    assert outcome.to_dict() == {"session_gated": True, "status_code": 500, "media_type": "text/html"}
+    assert outcome.to_dict() == {"session_gated": True, "status_code": status, "media_type": "text/html"}
 
     async def run() -> OAuthErrorDocument:
         async with async_client(
-            html_async_route_table(declared_routes(("GET", "/oauth/error", 500, None), site=SITE)), CREDENTIAL
+            html_async_route_table(declared_routes(("GET", "/oauth/error", status, None), site=SITE)), CREDENTIAL
         ) as client:
             return await client.auth_oauth.oauth_error()
 
-    assert asyncio.run(run()).status_code == 500
+    assert asyncio.run(run()).status_code == status
 
 
 def test_oauth_error_still_raises_on_a_status_outside_the_modelled_page() -> None:

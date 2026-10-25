@@ -28,7 +28,8 @@ data-plane API.
 uData accepts valid versions in `>=17.0.0,<18.0.0`.
 Before dispatch, it checks each typed API operation against the deployment's anonymous Swagger method and path.
 Missing routes return a typed unsupported error. Unavailable or invalid Swagger evidence fails closed.
-The anonymous site bootstrap and OAuth routes are the only Swagger exemptions.
+The anonymous `/api/1/site/` version probe and OAuth routes are the only Swagger exemptions.
+Typed site reads still require Swagger admission.
 Response decoding remains strict. Public mutations remain prohibited.
 
 ## How a connector is built
@@ -44,9 +45,8 @@ before construction. The context carries:
 - **Native service projections** — complete typed platform-specific service
   groups (datasets, resources, organizations, users, admin) defined as
   separate sync and async Protocols. There is no raw HTTP escape hatch.
-- **The effective capability profile** — a versioned, pinned
-  `EffectiveCapabilityProfile` that must match the platform's locked
-  profile version, or construction fails.
+- **The effective capability profile** — a versioned
+  `EffectiveCapabilityProfile` that must satisfy the platform's compatibility policy, or construction fails.
 - **Explicit executor ownership flags** — the context states whether the
   façade owns executor closing, so sync and async lifecycles stay
   independent and deterministic.
@@ -132,6 +132,10 @@ Third-party connectors are opt-in plugins:
 See [Platform Contracts](supported-portals.md) for the pinned platform
 profiles and [Architecture](architecture.md) for how the layers fit
 together.
+
+uData drift reports use schema `udata-drift/2`.
+This version replaces `pinned_version` metadata with `supported_range` and records accepted versions as `supported`.
+The report's `profile_version` still identifies the evidence baseline.
 
 ## Drift readiness
 

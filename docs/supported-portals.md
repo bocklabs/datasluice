@@ -22,7 +22,7 @@ from datasluice.connectors.catalog.ckan import CKANConnector, create_ckan_connec
 - **Package:** `datasluice.connectors.catalog.udata`
 - **Evidence baseline:** uData `17.6.0`, API v1 and v2 (`udata-17.6.json`)
 - **Runtime range:** `>=17.0.0,<18.0.0`, loaded from the profile
-- **Coverage:** the pinned profile encodes the uData v1 operation
+- **Coverage:** the profile encodes the uData v1 and v2 operation
   inventory across datasets, reuse, organizations, and community
   features, with the same per-operation capability classification.
 
@@ -44,8 +44,13 @@ An absent route or method returns `UnsupportedCapabilityError` before the target
 Unavailable, malformed, oversized, or redirecting Swagger evidence returns `CatalogUnavailableError`.
 Call `client.invalidate()` to discard cached evidence.
 
-The anonymous site bootstrap and `/oauth` routes are the only Swagger exemptions.
-OAuth still requires a supported version. Its 404 and 405 responses return a typed unsupported error.
+The anonymous `/api/1/site/` version probe and `/oauth` routes are the only Swagger exemptions.
+Typed site reads still require Swagger admission.
+OAuth still requires a supported version. Unaccepted 404 and 405 responses return a typed unsupported error.
+`oauth_error()` returns an `OAuthErrorDocument` for its modelled page statuses: 200, 404, and 500.
+The 17.6.0 evidence image lacks the error-page template, so its error page returns 500.
+Only the consent POST sends the uData API key. Other OAuth routes remain credential-free.
+Token and revocation forms carry their own client credentials.
 Route presence does not prove response compatibility. Changed payloads still fail through typed decoding.
 New deployment routes do not create typed methods. Public mutations remain prohibited.
 
