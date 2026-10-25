@@ -15,7 +15,7 @@ from time import monotonic, sleep
 from typing import TYPE_CHECKING, ClassVar, Self, TypedDict, Unpack, cast
 from urllib.parse import urlsplit
 
-from datasluice.connectors.catalog.udata.compatibility import UDataRouteGate
+from datasluice.connectors.catalog.udata.compatibility import UDATA_PROFILE_RESOURCE, UDataRouteGate
 from datasluice.connectors.catalog.udata.mapping import (
     _DATASETS_OPERATION_ID,
     _PAGED_PATH,
@@ -236,7 +236,6 @@ def _finite_json_float(value: str) -> float:
     return result
 
 
-_PROFILE_RESOURCE = "udata-17.6.json"
 _PAGER_PARAMS = frozenset({"page", "page_size"})
 _DATASET_PAGE_MAX_BYTES = 8 * 1024 * 1024
 _CONTROLLED_ORIGIN = "http://127.0.0.1:5640"
@@ -392,14 +391,10 @@ def _operation_id_from(value: str) -> OperationId:
 def declared_udata_profile() -> DeclaredCapabilityProfile:
     """Load and pin the checked-in uData capability profile."""
     document = json.loads(
-        resources.files("datasluice.contracts")
-        .joinpath("catalog")
-        .joinpath("profiles")
-        .joinpath(_PROFILE_RESOURCE)
-        .read_text(encoding="utf-8")
+        resources.files("datasluice.contracts").joinpath(UDATA_PROFILE_RESOURCE).read_text(encoding="utf-8")
     )
     if document.get("platform") != PLATFORM.value:
-        raise ValueError(f"The pinned {_PROFILE_RESOURCE} does not declare the uData platform.")
+        raise ValueError(f"The pinned {UDATA_PROFILE_RESOURCE} does not declare the uData platform.")
     operations: dict[OperationId, OperationSpec] = {}
     for item in document["operations"]:
         operation_id = _operation_id_from(item["id"])

@@ -109,7 +109,7 @@ def test_site_access_errors_preserve_status_and_capability_state(status: int) ->
         b'{"version":"17.6.0","version":"18.0.0"}',
         b'{"version":NaN}',
         b"[" * 1000 + b"]" * 1000,
-        b" " * (64 * 1024 + 1),
+        json.dumps({**_site_payload(), "title": "x" * (64 * 1024)}).encode(),
     ],
 )
 def test_site_document_decode_rejects_invalid_or_oversized_json(body: bytes) -> None:

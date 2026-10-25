@@ -37,7 +37,7 @@ class _DriftParser(argparse.ArgumentParser):
 
 def build_parser() -> argparse.ArgumentParser:
     """Build the single bounded drift invocation accepted by the scheduled workflow."""
-    parser = _DriftParser(description=__doc__)
+    parser = _DriftParser(description="Run bounded read-only uData drift checks.")
     parser.add_argument(
         "--out",
         type=Path,

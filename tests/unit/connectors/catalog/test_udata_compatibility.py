@@ -2,12 +2,19 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
 from datasluice.connectors.catalog.udata.clients import AsyncUDataClient, SyncUDataClient, declared_udata_profile
-from datasluice.connectors.catalog.udata.compatibility import UDataRouteSurface, udata_version_policy
-from datasluice.errors.catalog import CatalogError, CatalogUnavailableError, UnsupportedCapabilityError
+from datasluice.connectors.catalog.udata.compatibility import UDataRouteGate, UDataRouteSurface, udata_version_policy
+from datasluice.errors.catalog import (
+    CatalogError,
+    CatalogUnavailableError,
+    CatalogValidationError,
+    UnsupportedCapabilityError,
+)
 from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse
 from tests.unit.connectors.catalog.test_udata_tracer import RecordingTransport, _datasets_operation
 
@@ -22,6 +29,95 @@ def test_17_16_deployment_completes_dataset_read() -> None:
         outcome = type(error).__name__
     assert outcome == "completed"
     assert len(envelope.items) == 1
+
+
+def test_async_client_admits_contending_native_reads_in_successive_loops() -> None:
+    class PendingTransport(AsyncSurfaceTransport):
+        started: asyncio.Event
+        release: asyncio.Event
+
+        async def send(self, request: RuntimeRequest) -> RuntimeResponse:
+            if request.url.endswith("/swagger.json"):
+                self.started.set()
+                await self.release.wait()
+            if request.url.endswith("/datasets/abc/"):
+                return RuntimeResponse(200, {}, b'{"id":"abc","title":"Dataset","slug":"dataset"}')
+            return await super().send(request)
+
+    surface = RuntimeResponse(
+        200,
+        {},
+        json.dumps({"swagger": "2.0", "basePath": "/api/1", "paths": {"/datasets/{id}/": {"get": {}}}}).encode(),
+    )
+    transport = PendingTransport(surface)
+    client = AsyncUDataClient(transport, declared_udata_profile(), origin="http://127.0.0.1:5640")
+
+    async def run(*, close: bool) -> None:
+        transport.started = asyncio.Event()
+        transport.release = asyncio.Event()
+        first = asyncio.create_task(client.datasets.get("abc"))
+        await asyncio.wait_for(transport.started.wait(), timeout=2)
+        second = asyncio.create_task(client.datasets.get("abc"))
+        await asyncio.sleep(0)
+        transport.release.set()
+        try:
+            records = await asyncio.gather(first, second)
+            assert [record.id.value for record in records] == ["abc", "abc"]
+        finally:
+            if close:
+                await client.aclose()
+
+    asyncio.run(run(close=False))
+    client.invalidate()
+    asyncio.run(run(close=True))
+
+
+def test_sync_gate_probes_independent_api_versions_concurrently() -> None:
+    entered = {api: threading.Event() for api in ("1", "2")}
+    release = threading.Event()
+
+    class PendingTransport(RecordingTransport):
+        def send(self, request: RuntimeRequest) -> RuntimeResponse:
+            api = request.url.split("/")[-2]
+            self.requests.append(request)
+            entered[api].set()
+            assert release.wait(timeout=3)
+            return RuntimeResponse(
+                200,
+                {},
+                json.dumps(
+                    {"swagger": "2.0", "basePath": f"/api/{api}", "paths": {"/datasets/": {"get": {}}}}
+                ).encode(),
+            )
+
+    transport = PendingTransport()
+    gate = UDataRouteGate("http://127.0.0.1:5640", transport, 60)
+    with ThreadPoolExecutor(max_workers=2) as workers:
+        pending = [
+            workers.submit(gate.require, "GET", f"/api/{api}/datasets/", "udata/read", "17.6.0") for api in entered
+        ]
+        try:
+            assert all(event.wait(timeout=2) for event in entered.values())
+            gate.invalidate()
+        finally:
+            release.set()
+        for future in pending:
+            future.result(timeout=3)
+    for api in entered:
+        gate.require("GET", f"/api/{api}/datasets/", "udata/read", "17.6.0")
+    assert len(transport.requests) == 4
+
+
+def test_unsupported_typed_path_is_refused_without_dispatch_or_caller_data() -> None:
+    transport = RecordingTransport()
+    gate = UDataRouteGate("http://127.0.0.1:5640", transport, 60)
+    with pytest.raises(CatalogValidationError) as raised:
+        gate.require("GET", "/api/3/private-id/?token=caller-secret", "udata/read", "17.6.0")
+    assert raised.value.safe_action
+    assert raised.value.platform == "udata"
+    assert raised.value.operation == "udata/route-admission"
+    assert raised.value.metadata == {"route_state": "unsupported"}
+    assert not transport.requests
 
 
 @pytest.mark.parametrize("version", ["17.0.0", "17.6.0", "17.16.0", "17.999.0"])

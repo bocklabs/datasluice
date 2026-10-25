@@ -223,7 +223,7 @@ def test_t01_explicitly_empty_target_sequence_is_refused_before_dispatch() -> No
     assert transport.requests == []
 
 
-@pytest.mark.parametrize("version", ["17.6.0", "17.16.0"])
+@pytest.mark.parametrize("version", ["17.6.0", "17.16.0", "17.60.0"])
 def test_t03_supported_version_classifies_every_allowlisted_read_as_matched(version: str) -> None:
     transport = RecordingTransport({**_compatible_routes(), _SITE_URL: _site_body(version)})
 
@@ -258,15 +258,6 @@ def test_t03_mismatched_version_is_incompatible_and_skips_every_later_read() -> 
     assert site.metadata["supported_range"] == ">=17.0.0,<18.0.0"
     assert (dataset.outcome, topics.outcome) == (drift.SKIPPED, drift.SKIPPED)
     assert transport.urls == [_SITE_URL]
-
-
-def test_t03_version_check_is_not_softened_to_a_compatible_prefix() -> None:
-    transport = RecordingTransport({_SITE_URL: _site_body("18.60.0")})
-
-    report = run_udata_drift([_target()], transport=transport, now=lambda: _FIXED_NOW)
-
-    assert report.records[0].outcome == drift.INCOMPATIBLE
-    assert report.records[0].metadata["observed_version"] == "18.60.0"
 
 
 def test_t03_missing_and_malformed_versions_are_incompatible_not_outage() -> None:

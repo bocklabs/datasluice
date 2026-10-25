@@ -11,7 +11,12 @@ from time import monotonic
 from typing import TYPE_CHECKING, Never, cast
 from urllib.parse import urlsplit
 
-from datasluice.errors.catalog import BudgetExhaustedError, CatalogUnavailableError, UnsupportedCapabilityError
+from datasluice.errors.catalog import (
+    BudgetExhaustedError,
+    CatalogUnavailableError,
+    CatalogValidationError,
+    UnsupportedCapabilityError,
+)
 from datasluice.runtime.transport.base import CatalogTransport, RedirectPolicy, RuntimeRequest, RuntimeResponse
 
 if TYPE_CHECKING:
@@ -25,6 +30,7 @@ _PARAMETER = re.compile(r"\{[A-Za-z_]\w*\}", re.ASCII)
 _METHODS = frozenset({"get", "post", "put", "patch", "delete"})
 _MAX_BYTES = 4 * 1024 * 1024
 _MAX_ROUTES = 4096
+UDATA_PROFILE_RESOURCE = "catalog/profiles/udata-17.6.json"
 
 
 def _version_parts(version: str) -> tuple[int, ...]:
@@ -56,7 +62,7 @@ class UDataVersionPolicy:
 @lru_cache(maxsize=1)
 def udata_version_policy() -> UDataVersionPolicy:
     document = json.loads(
-        resources.files("datasluice.contracts").joinpath("catalog/profiles/udata-17.6.json").read_text(encoding="utf-8")
+        resources.files("datasluice.contracts").joinpath(UDATA_PROFILE_RESOURCE).read_text(encoding="utf-8")
     )
     policy = document["compatibility"]
     return UDataVersionPolicy(policy["minimum"], policy["maximum_exclusive"])
@@ -139,7 +145,17 @@ class UDataRouteGate:
         self._cache: dict[str, tuple[UDataRouteSurface, float]] = {}
         self._lock = threading.RLock()
         self._generation = 0
-        self._async_lock = asyncio.Lock()
+        self._async_lock: asyncio.Lock | None = None
+        self._async_lock_loop: asyncio.AbstractEventLoop | None = None
+
+    def _async_lock_for(self) -> asyncio.Lock:
+        loop = asyncio.get_running_loop()
+        lock = self._async_lock
+        if lock is None or self._async_lock_loop is not loop:
+            lock = asyncio.Lock()
+            self._async_lock = lock
+            self._async_lock_loop = loop
+        return lock
 
     def invalidate(self) -> None:
         with self._lock:
@@ -153,7 +169,13 @@ class UDataRouteGate:
             return None
         match = re.match(r"/api/([12])/", path)
         if match is None:
-            raise ValueError("The typed uData path is outside the supported API surface.")
+            raise CatalogValidationError(
+                "The typed uData path is outside the supported API surface.",
+                operation="udata/route-admission",
+                platform="udata",
+                metadata={"route_state": "unsupported"},
+                safe_action="Use a typed operation in the supported uData API surface.",
+            )
         return match[1]
 
     def _request(self, api: str, deadline: DeadlineMonitor | None) -> RuntimeRequest:
@@ -211,19 +233,19 @@ class UDataRouteGate:
             return
         with self._lock:
             surface = self._cached(api)
-            if surface is None:
-                generation = self._generation
-                try:
-                    surface = self._decode(
-                        cast("CatalogTransport", self._transport).send(self._request(api, deadline)),
-                        api,
-                        deadline,
-                        generation,
-                    )
-                except BudgetExhaustedError:
-                    raise
-                except Exception:
-                    raise self._unavailable(operation, api) from None
+            generation = self._generation
+        if surface is None:
+            try:
+                surface = self._decode(
+                    cast("CatalogTransport", self._transport).send(self._request(api, deadline)),
+                    api,
+                    deadline,
+                    generation,
+                )
+            except BudgetExhaustedError:
+                raise
+            except Exception:
+                raise self._unavailable(operation, api) from None
         self._check(surface, method, path, operation, observed_version, api)
 
     async def require_async(
@@ -237,7 +259,7 @@ class UDataRouteGate:
         api = self.api_version(method, path)
         if api is None:
             return
-        async with self._async_lock:
+        async with self._async_lock_for():
             surface = self._cached(api)
             if surface is None:
                 generation = self._generation
