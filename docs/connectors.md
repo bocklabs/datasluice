@@ -73,6 +73,10 @@ deployment-disabled states. Safety-sensitive behavior — retries,
 destructive operations, insecure TLS, raw diagnostics — stays locked
 behind explicit safe-policy choices rather than defaults.
 
+The uData `datasets_list` bounded read requires `udata/api-v1.list-datasets` in both `CatalogOperationRequest` and `CatalogOperationGuard`.
+This corrects the earlier aggregate mutation identity. Callers must use the read identity.
+The aggregate `udata/api-v1.dataset-list-search-show-create-update-delete` profile declaration retains its mutation rules.
+
 ### Record serialization and retained evidence
 
 Runtime record payloads and extension mappings are not evidence artifacts.

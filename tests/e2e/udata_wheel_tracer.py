@@ -70,9 +70,7 @@ from datasluice.runtime.transport.base import AsyncRuntimeStreamResponse, Runtim
 
 assert datasluice.__file__ and datasluice.__file__.startswith(sys.argv[1])
 
-op_id = next(
-    op for op in declared_udata_profile().operations if op.method == "dataset-list-search-show-create-update-delete"
-)
+op_id = next(op for op in declared_udata_profile().operations if op.method == "list-datasets")
 
 JSON_HEADERS = {"Content-Type": "application/json"}
 

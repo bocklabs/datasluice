@@ -493,6 +493,7 @@ def _page_request(
     *,
     origin: str,
     params: Mapping[str, int],
+    deadline: DeadlineMonitor,
 ) -> RuntimeRequest:
     """Build one anonymous-safe paged dataset request; credentials attach later."""
     query = "&".join(f"{key}={value}" for key, value in sorted(params.items()))
@@ -503,6 +504,7 @@ def _page_request(
         headers={},
         body=None,
         max_response_bytes=_DATASET_PAGE_MAX_BYTES,
+        deadline=deadline,
     )
 
 
@@ -2205,7 +2207,7 @@ class SyncUDataClient(_UDataClientCore):
         deadline = DeadlineMonitor(self._budget, clock=self._clock)
         self._require_site_version(deadline=deadline)
         params = self._validate_page_params(operation)
-        request = _page_request(origin=self._origin, params=params)
+        request = _page_request(origin=self._origin, params=params, deadline=deadline)
         self._admit_route(owning_id, request.method, request.url, deadline=deadline)
         credential = _refreshed_credential(self._credentials)
         scope = _credential_scope(credential)
@@ -2222,6 +2224,7 @@ class SyncUDataClient(_UDataClientCore):
                 headers=_auth_headers(credential),
                 body=request.body,
                 max_response_bytes=request.max_response_bytes,
+                deadline=request.deadline,
             )
         deadline.assert_dispatchable(str(owning_id), PLATFORM.value)
         sync_transport = cast("CatalogTransport", self._transport)
@@ -2265,7 +2268,9 @@ class SyncUDataClient(_UDataClientCore):
                 max_attempts=self._max_attempts,
                 sleep=self._retry_sleep,
             ).run(send)
+            deadline.assert_dispatchable(str(owning_id), PLATFORM.value)
             result = self._decode(owning_id, response, credential_scope=scope)
+            deadline.assert_dispatchable(str(owning_id), PLATFORM.value)
         except BudgetExhaustedError:
             self._emit(
                 owning_id,
@@ -2481,7 +2486,7 @@ class AsyncUDataClient(_UDataClientCore):
         deadline = DeadlineMonitor(self._budget, clock=self._clock)
         await self.site_version(deadline=deadline)
         params = self._validate_page_params(operation)
-        request = _page_request(origin=self._origin, params=params)
+        request = _page_request(origin=self._origin, params=params, deadline=deadline)
         await self._admit_route_async(owning_id, request.method, request.url, deadline=deadline)
         credential = await _refreshed_credential_async(self._credentials)
         scope = _credential_scope(credential)
@@ -2498,6 +2503,7 @@ class AsyncUDataClient(_UDataClientCore):
                 headers=_auth_headers(credential),
                 body=request.body,
                 max_response_bytes=request.max_response_bytes,
+                deadline=request.deadline,
             )
         deadline.assert_dispatchable(str(owning_id), PLATFORM.value)
         async_transport = cast("AsyncCatalogTransport", self._transport)
@@ -2541,7 +2547,9 @@ class AsyncUDataClient(_UDataClientCore):
                 max_attempts=self._max_attempts,
                 sleep=lambda _: None,
             ).run_async(send, sleep=self._retry_sleep)
+            deadline.assert_dispatchable(str(owning_id), PLATFORM.value)
             result = self._decode(owning_id, response, credential_scope=scope)
+            deadline.assert_dispatchable(str(owning_id), PLATFORM.value)
         except BudgetExhaustedError:
             self._emit(
                 owning_id,

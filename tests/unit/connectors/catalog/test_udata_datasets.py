@@ -1508,7 +1508,7 @@ def test_dataset_extras_validation_still_fails_typed_before_redaction() -> None:
     with pytest.raises(CatalogValidationError) as raised:
         wire.parse_extras({"not-finite": float("nan")})
 
-    assert raised.value.operation == "udata/api-v1.dataset-list-search-show-create-update-delete"
+    assert raised.value.operation == "udata/api-v1.list-datasets"
     with pytest.raises(CatalogValidationError):
         wire.parse_extras(["not", "an", "object"])
 
@@ -1517,7 +1517,7 @@ def test_dataset_extras_reject_an_empty_top_level_key_instead_of_dropping_it() -
     with pytest.raises(CatalogValidationError) as raised:
         wire.parse_extras({"": 1})
 
-    assert raised.value.operation == "udata/api-v1.dataset-list-search-show-create-update-delete"
+    assert raised.value.operation == "udata/api-v1.list-datasets"
 
 
 def test_suggestion_records_redact_credential_shaped_fields() -> None:

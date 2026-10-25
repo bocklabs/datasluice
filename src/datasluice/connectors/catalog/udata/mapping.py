@@ -23,7 +23,7 @@ PLATFORM = CatalogPlatform.UDATA
 
 NATIVE_PAGE_FIELDS = ("data", "page", "page_size", "previous_page", "next_page", "total")
 _PAGED_PATH = "/api/1/datasets/"
-_DATASETS_OPERATION_ID = "udata/api-v1.dataset-list-search-show-create-update-delete"
+_DATASETS_OPERATION_ID = "udata/api-v1.list-datasets"
 
 
 @dataclass(frozen=True, slots=True)

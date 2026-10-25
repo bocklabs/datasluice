@@ -660,6 +660,7 @@ def parse_jsonld_context(
     invalid_payload = False
     try:
         payload = json.loads(body, parse_constant=reject_constant)
+        _validate_json_value(payload)
     except (TypeError, ValueError):
         invalid_payload = True
         payload = None

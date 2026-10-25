@@ -16,7 +16,11 @@ from datasluice.errors.catalog import (
     UnsupportedCapabilityError,
 )
 from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse
-from tests.unit.connectors.catalog.test_udata_tracer import RecordingTransport, _datasets_operation
+from tests.unit.connectors.catalog.test_udata_tracer import (
+    RecordingAsyncTransport,
+    RecordingTransport,
+    _datasets_operation,
+)
 
 
 def test_17_16_deployment_completes_dataset_read() -> None:
@@ -227,6 +231,30 @@ def test_unverifiable_surface_fails_closed(response: RuntimeResponse | Exception
     assert len(transport.requests) == 2
     assert raised.value.metadata["route_state"] == "unavailable"
     assert "private" not in str(raised.value)
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+def test_swagger_gate_preserves_original_typed_catalog_error(asynchronous: bool) -> None:
+    original = CatalogValidationError(
+        "The request exceeds the transport bound.",
+        operation="udata/api-v1.list-datasets",
+        platform="udata",
+        safe_action="Reduce the request size.",
+    )
+    transport = SurfaceTransport(original)
+
+    class AsyncTransport(RecordingAsyncTransport):
+        async def send(self, request: RuntimeRequest) -> RuntimeResponse:
+            return transport.send(request)
+
+    with pytest.raises(CatalogValidationError) as raised:
+        if asynchronous:
+            gate = UDataRouteGate(transport=AsyncTransport(), origin="https://example.test", ttl_seconds=60)
+            asyncio.run(gate.require_async("GET", "/api/1/datasets/", "udata/api-v1.list-datasets", "17.6.0"))
+        else:
+            gate = UDataRouteGate(transport=transport, origin="https://example.test", ttl_seconds=60)
+            gate.require("GET", "/api/1/datasets/", "udata/api-v1.list-datasets", "17.6.0")
+    assert raised.value is original
 
 
 def test_async_17_16_deployment_completes_dataset_read() -> None:

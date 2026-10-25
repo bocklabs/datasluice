@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Never, cast
 from urllib.parse import urlsplit
 
 from datasluice.errors.catalog import (
-    BudgetExhaustedError,
+    CatalogError,
     CatalogUnavailableError,
     CatalogValidationError,
     UnsupportedCapabilityError,
@@ -242,7 +242,7 @@ class UDataRouteGate:
                     deadline,
                     generation,
                 )
-            except BudgetExhaustedError:
+            except CatalogError:
                 raise
             except Exception:
                 raise self._unavailable(operation, api) from None
@@ -266,7 +266,7 @@ class UDataRouteGate:
                 try:
                     response = await cast("AsyncCatalogTransport", self._transport).send(self._request(api, deadline))
                     surface = self._decode(response, api, deadline, generation)
-                except BudgetExhaustedError:
+                except CatalogError:
                     raise
                 except Exception:
                     raise self._unavailable(operation, api) from None

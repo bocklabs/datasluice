@@ -1940,6 +1940,36 @@ def test_row195_jsonld_context_decodes_json_without_retaining_raw_bytes() -> Non
     assert transport.requests[-1].url == url
 
 
+@pytest.mark.parametrize("asynchronous", [False, True])
+def test_jsonld_numeric_overflow_returns_bounded_native_error(asynchronous: bool) -> None:
+    url = f"{_ORIGIN}/api/1/site/context.jsonld"
+    routes = _routes(
+        (
+            "GET",
+            url,
+            _json_response(200, b'{"response-controlled-field":1e999}', {"Content-Type": "application/ld+json"}),
+        )
+    )
+    with pytest.raises(NativeCatalogError) as raised:
+        if asynchronous:
+            _, async_client = _async_client(routes)
+
+            async def run() -> None:
+                async with async_client:
+                    await async_client.root_profile.jsonld_context()
+
+            asyncio.run(run())
+        else:
+            _, client = _sync_client(routes)
+            with client:
+                client.root_profile.jsonld_context()
+    assert raised.value.operation == wire.ROOT_OPERATION
+    assert raised.value.status_code == 200
+    assert "response-controlled-field" not in str(raised.value)
+    assert raised.value.__cause__ is None
+    assert raised.value.__context__ is None
+
+
 @pytest.mark.parametrize("fmt", ("rdf", "owl"))
 def test_rdf_xml_aliases_are_supported(fmt: str) -> None:
     assert wire.media_type_for_format(fmt) == "application/rdf+xml"
