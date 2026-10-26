@@ -238,7 +238,7 @@ def _mutating(
     failure_receipt, completed = _site_mutation_shapers(
         policy, decode, target, evidence_digest, emit, dispatched=dispatched
     )
-    return _run_receipted_mutation(dispatch, failure_receipt, completed)
+    return _run_receipted_mutation(dispatch, failure_receipt, completed, errors=SETTLEMENT_ERRORS)
 
 
 async def _amutating(
@@ -254,7 +254,7 @@ async def _amutating(
     failure_receipt, completed = _site_mutation_shapers(
         policy, decode, target, evidence_digest, emit, dispatched=dispatched
     )
-    return await _run_receipted_mutation_async(dispatch, failure_receipt, completed)
+    return await _run_receipted_mutation_async(dispatch, failure_receipt, completed, errors=ASYNC_SETTLEMENT_ERRORS)
 
 
 def _decode_profile(payload: object, *, status_code: int = 200) -> SiteProfile:

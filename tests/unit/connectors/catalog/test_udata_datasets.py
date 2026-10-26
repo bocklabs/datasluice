@@ -1323,6 +1323,82 @@ def test_dataset_nested_json_returns_bounded_native_error(asynchronous: bool, na
 
 
 @pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.parametrize("shape", ["extras", "facets", "followers"])
+def test_dataset_auxiliary_nested_json_returns_bounded_native_error(asynchronous: bool, shape: str) -> None:
+    nested = b"[" * 500 + b"0" + b"]" * 500
+    paths = {
+        "extras": "/api/2/datasets/abc/extras/",
+        "facets": "/api/2/datasets/search/?page=1&page_size=20",
+        "followers": "/api/1/datasets/abc/followers/?page=1&page_size=20",
+    }
+    bodies = {
+        "extras": b'{"response-controlled-field":' + nested + b"}",
+        "facets": b'{"data":[],"facets":{"response-controlled-field":' + nested + b"}}",
+        "followers": b'{"data":[],"response-controlled-field":' + nested + b"}",
+    }
+    operations = {"extras": "v2_get_extras", "facets": "v2_search", "followers": "list_followers"}
+    routes = _site_first({("GET", "http://127.0.0.1:5640" + paths[shape]): (206, bodies[shape])})
+    with pytest.raises(NativeCatalogError) as raised:
+        if asynchronous:
+
+            async def run() -> None:
+                async with _async_client(routes) as client:
+                    if shape == "extras":
+                        await client.datasets.get_extras_v2("abc")
+                    elif shape == "facets":
+                        await client.datasets.search_v2()
+                    else:
+                        await client.datasets.list_dataset_followers("abc")
+
+            asyncio.run(run())
+        else:
+            with _sync_client(routes) as client:
+                if shape == "extras":
+                    client.datasets.get_extras_v2("abc")
+                elif shape == "facets":
+                    client.datasets.search_v2()
+                else:
+                    client.datasets.list_dataset_followers("abc")
+    assert raised.value.operation == wire.DATASET_OPERATIONS[operations[shape]]
+    assert raised.value.status_code == 206
+    assert "response-controlled-field" not in str(raised.value)
+    assert raised.value.__cause__ is None
+    assert raised.value.__context__ is None
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.parametrize("native", [False, True])
+def test_dataset_validation_errors_exclude_arbitrary_response_keys(asynchronous: bool, native: bool) -> None:
+    marker = "response-secret-" + "x" * 100_000
+    body = _page_body([{**_dataset_doc(), marker: {"": 1}}])
+    url = "http://127.0.0.1:5640/api/1/datasets/" + ("?page=1&page_size=20" if native else "")
+    routes = _site_first({("GET", url): body})
+    operation_id = next(op for op in declared_udata_profile().operations if op.method == "list-datasets")
+    request = CatalogOperationRequest(operation_id=operation_id)
+    guard = CatalogOperationGuard(operation_id=operation_id)
+    with pytest.raises(CatalogValidationError) as raised:
+        if asynchronous:
+
+            async def run() -> None:
+                async with _async_client(routes) as client:
+                    if native:
+                        await client.datasets.list()
+                    else:
+                        await client.datasets_list(request, guard)
+
+            asyncio.run(run())
+        else:
+            with _sync_client(routes) as client:
+                if native:
+                    client.datasets.list()
+                else:
+                    client.datasets_list(request, guard)
+    assert "response-secret-" not in str(raised.value)
+    assert len(str(raised.value)) < 256
+    assert marker not in str(raised.value.metadata)
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
 @pytest.mark.parametrize("field,value", [("created_at", "not-an-instant"), ("last_modified", "2026-99-99T25:61:61Z")])
 def test_dataset_malformed_timestamp_is_rejected(asynchronous: bool, field: str, value: str) -> None:
     routes = _site_first({("GET", "http://127.0.0.1:5640/api/1/datasets/abc/"): {**_dataset_doc(), field: value}})

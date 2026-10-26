@@ -193,13 +193,13 @@ def _validate_json_object(value: Mapping[object, object], *, operation: str, pat
     for key, nested in value.items():
         if not isinstance(key, str) or not key:
             raise _invalid_field(path, operation, "an object with string keys")
-        _validate_json_value(nested, operation=operation, path=f"{path}.{key}")
+        _validate_json_value(nested, operation=operation, path=path)
 
 
 def _validate_json_array(value: list[object], *, operation: str, path: str) -> None:
     """Validate the nested values of one JSON array."""
-    for index, nested in enumerate(value):
-        _validate_json_value(nested, operation=operation, path=f"{path}[{index}]")
+    for nested in value:
+        _validate_json_value(nested, operation=operation, path=path)
 
 
 def _validate_nested_string_fields(
@@ -254,6 +254,15 @@ def _validate_nested_list_fields(
                     )
 
 
+def _dataset_nesting_error(operation: str, status_code: int | None) -> NativeCatalogError:
+    return NativeCatalogError(
+        "The uData dataset response exceeds the supported JSON nesting.",
+        operation=operation,
+        platform=PLATFORM.value,
+        status_code=status_code,
+    )
+
+
 def _validate_dataset_fields(
     payload: Mapping[str, object], *, operation: str, detail: bool, status_code: int | None = None
 ) -> None:
@@ -261,17 +270,14 @@ def _validate_dataset_fields(
         _validate_required_dataset_fields(payload, operation=operation, detail=detail)
         for field, value in payload.items():
             _validate_dataset_field(field, value, operation=operation)
-            _validate_json_value(value, operation=operation, path=field)
+            _validate_json_value(
+                value, operation=operation, path=field if field in _DATASET_DETAIL_FIELDS else "extension"
+            )
         _validate_dataset_nested_fields(payload, operation=operation)
         return
     except RecursionError:
         pass
-    raise NativeCatalogError(
-        "The uData dataset response exceeds the supported JSON nesting.",
-        operation=operation,
-        platform=PLATFORM.value,
-        status_code=status_code,
-    )
+    raise _dataset_nesting_error(operation, status_code)
 
 
 def _validate_required_dataset_fields(payload: Mapping[str, object], *, operation: str, detail: bool) -> None:
@@ -437,60 +443,72 @@ def parse_dataset_detail(
     ``udata.dataset`` native extension only after shared credential redaction, with nesting depth and text length
     bounded.
     """
-    if not isinstance(payload, Mapping):
-        raise CatalogValidationError(
-            "The uData dataset document must be a JSON object.",
-            operation=operation,
-            platform=PLATFORM.value,
-            safe_action=_PINNED_SOURCE_ORACLE_ACTION,
-        )
-    _validate_dataset_fields(payload, operation=operation, detail=True, status_code=status_code)
-    return _native_dataset(payload)
-
-
-def parse_suggestions(payload: object, *, operation: str = _DATASETS_OPERATION_ID) -> tuple[NativeRecord, ...]:
-    """Decode the suggest response into bounded native suggestion records."""
-    if not isinstance(payload, list) or not all(isinstance(item, Mapping) for item in payload):
-        raise CatalogValidationError(
-            "The uData suggest response must be a JSON array of objects.",
-            operation=operation,
-            platform=PLATFORM.value,
-            safe_action=_PINNED_SOURCE_ORACLE_ACTION,
-        )
-    records = []
-    for item in payload:
-        _validate_dataset_fields(item, operation=operation, detail=False)
-        title = item.get("title")
-        if not isinstance(title, str) or not title:
+    try:
+        if not isinstance(payload, Mapping):
             raise CatalogValidationError(
-                "The uData suggestion requires a non-empty string title.",
+                "The uData dataset document must be a JSON object.",
                 operation=operation,
                 platform=PLATFORM.value,
                 safe_action=_PINNED_SOURCE_ORACLE_ACTION,
             )
-        records.append(
-            NativeRecord(
-                platform=PLATFORM,
-                resource_kind=ResourceKind.DATASET,
-                id=CatalogId(
+        _validate_dataset_fields(payload, operation=operation, detail=True, status_code=status_code)
+        return _native_dataset(payload)
+    except RecursionError:
+        pass
+    raise _dataset_nesting_error(operation, status_code)
+
+
+def parse_suggestions(
+    payload: object, *, operation: str = _DATASETS_OPERATION_ID, status_code: int | None = None
+) -> tuple[NativeRecord, ...]:
+    """Decode the suggest response into bounded native suggestion records."""
+    try:
+        if not isinstance(payload, list) or not all(isinstance(item, Mapping) for item in payload):
+            raise CatalogValidationError(
+                "The uData suggest response must be a JSON array of objects.",
+                operation=operation,
+                platform=PLATFORM.value,
+                safe_action=_PINNED_SOURCE_ORACLE_ACTION,
+            )
+        records = []
+        for item in payload:
+            _validate_dataset_fields(item, operation=operation, detail=False, status_code=status_code)
+            title = item.get("title")
+            if not isinstance(title, str) or not title:
+                raise CatalogValidationError(
+                    "The uData suggestion requires a non-empty string title.",
+                    operation=operation,
+                    platform=PLATFORM.value,
+                    safe_action=_PINNED_SOURCE_ORACLE_ACTION,
+                )
+            records.append(
+                NativeRecord(
                     platform=PLATFORM,
                     resource_kind=ResourceKind.DATASET,
-                    value=_required_id(item.get("id"), operation=operation),
-                ),
-                payload=redact_record_payload(
-                    {key: value for key, value in item.items() if key in _DATASET_DETAIL_FIELDS}
-                ),
-                extensions={
-                    "udata.dataset": redact_record_payload(
-                        {key: value for key, value in item.items() if key not in _DATASET_DETAIL_FIELDS}
-                    )
-                },
+                    id=CatalogId(
+                        platform=PLATFORM,
+                        resource_kind=ResourceKind.DATASET,
+                        value=_required_id(item.get("id"), operation=operation),
+                    ),
+                    payload=redact_record_payload(
+                        {key: value for key, value in item.items() if key in _DATASET_DETAIL_FIELDS}
+                    ),
+                    extensions={
+                        "udata.dataset": redact_record_payload(
+                            {key: value for key, value in item.items() if key not in _DATASET_DETAIL_FIELDS}
+                        )
+                    },
+                )
             )
-        )
-    return tuple(records)
+        return tuple(records)
+    except RecursionError:
+        pass
+    raise _dataset_nesting_error(operation, status_code)
 
 
-def parse_extras(payload: object, *, operation: str = _DATASETS_OPERATION_ID) -> Mapping[str, object]:
+def parse_extras(
+    payload: object, *, operation: str = _DATASETS_OPERATION_ID, status_code: int | None = None
+) -> Mapping[str, object]:
     """Decode a v2 extras document with typed validation and redaction.
 
     Extras are caller-authored free-form JSON, so they are the widest credential surface in the dataset family.
@@ -498,26 +516,30 @@ def parse_extras(payload: object, *, operation: str = _DATASETS_OPERATION_ID) ->
     redacted, keeping every non-credential extra while credential-shaped keys and credential-shaped string content are
     replaced by the shared marker.
     """
-    if not isinstance(payload, Mapping):
-        raise CatalogValidationError(
-            "The uData extras response must be a JSON object.",
-            operation=operation,
-            platform=PLATFORM.value,
-            safe_action=_PINNED_SOURCE_ORACLE_ACTION,
-        )
-    for key, value in payload.items():
-        if not isinstance(key, str) or not key:
-            raise _invalid_field("extras", operation, "an object with string keys")
-        _validate_json_value(value, operation=operation, path=key)
-    frozen = _freeze_json(redact_record_payload(payload), "udata.dataset_extras")
-    if not isinstance(frozen, Mapping):
-        raise CatalogValidationError(
-            "The uData extras response must be a JSON object.",
-            operation=operation,
-            platform=PLATFORM.value,
-            safe_action=_PINNED_SOURCE_ORACLE_ACTION,
-        )
-    return frozen
+    try:
+        if not isinstance(payload, Mapping):
+            raise CatalogValidationError(
+                "The uData extras response must be a JSON object.",
+                operation=operation,
+                platform=PLATFORM.value,
+                safe_action=_PINNED_SOURCE_ORACLE_ACTION,
+            )
+        for key, value in payload.items():
+            if not isinstance(key, str) or not key:
+                raise _invalid_field("extras", operation, "an object with string keys")
+            _validate_json_value(value, operation=operation, path="extras")
+        frozen = _freeze_json(redact_record_payload(payload), "udata.dataset_extras")
+        if not isinstance(frozen, Mapping):
+            raise CatalogValidationError(
+                "The uData extras response must be a JSON object.",
+                operation=operation,
+                platform=PLATFORM.value,
+                safe_action=_PINNED_SOURCE_ORACLE_ACTION,
+            )
+        return frozen
+    except RecursionError:
+        pass
+    raise _dataset_nesting_error(operation, status_code)
 
 
 def media_type_for_format(fmt: str, *, operation: str = _DATASETS_OPERATION_ID) -> str:
@@ -574,7 +596,7 @@ def unfollow_dataset_request(dataset_id: str) -> tuple[str, str, dict[str, str],
     return "DELETE", f"{_DATASET_PATH}{identifier}/followers/", {}, None
 
 
-def parse_dataset_followers(payload: object) -> MappingRecord:
+def parse_dataset_followers(payload: object, *, status_code: int | None = None) -> MappingRecord:
     operation = DATASET_OPERATIONS["list_followers"]
     if not isinstance(payload, Mapping):
         raise _invalid_field("followers page", operation, "a JSON object")
@@ -585,7 +607,11 @@ def parse_dataset_followers(payload: object) -> MappingRecord:
                 raise _invalid_field(field, operation, "a string or null")
         if "follower" in item and item["follower"] is not None and not isinstance(item["follower"], Mapping):
             raise _invalid_field("follower", operation, "an object or null")
-    return MappingRecord(payload)
+    try:
+        return MappingRecord(payload)
+    except RecursionError:
+        pass
+    raise _dataset_nesting_error(operation, status_code)
 
 
 def parse_dataset_follower_count(payload: object, *, operation: str) -> Mapping[str, object]:

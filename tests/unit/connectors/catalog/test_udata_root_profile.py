@@ -1489,6 +1489,48 @@ def test_row184_set_site_uses_patch_presence_and_exact_confirmation() -> None:
     assert [request.method for request in transport.requests] == ["GET", "GET"]
 
 
+@pytest.mark.parametrize("asynchronous", [False, True])
+def test_site_patch_interrupt_retains_cancelled_receipt(asynchronous: bool) -> None:
+    interruption = KeyboardInterrupt()
+    original_open = _ControlledProgramOpener.open
+
+    def interrupt_patch(
+        self: _ControlledProgramOpener, request: _ControlledProgramRequest, timeout: float
+    ) -> _ControlledProgramResponse:
+        if getattr(request, "method", None) == "PATCH":
+            raise interruption
+        return original_open(self, request, timeout)
+
+    routes = _routes(("PATCH", _SITE_URL, _json_response(200, _site_body(), {"Content-Type": "application/json"})))
+    with pytest.raises(KeyboardInterrupt) as raised:
+        if asynchronous:
+            _, async_client = _async_client(routes, credential=_CREDENTIAL)
+
+            async def run() -> None:
+                async with async_client:
+                    with patch.object(_ControlledProgramOpener, "open", interrupt_patch):
+                        await async_client.root_profile.set_site(
+                            SitePatchInput(title="Changed"), permissions=_PERMISSIONS, mutation_policy=_site_policy()
+                        )
+
+            asyncio.run(run())
+        else:
+            _, client = _sync_client(routes, credential=_CREDENTIAL)
+            with client, patch.object(_ControlledProgramOpener, "open", interrupt_patch):
+                client.root_profile.set_site(
+                    SitePatchInput(title="Changed"), permissions=_PERMISSIONS, mutation_policy=_site_policy()
+                )
+    assert raised.value is interruption
+    receipt = _receipt_from(raised.value)
+    assert receipt.operation == "udata/api-v1.set_site"
+    assert receipt.target.value == "site"
+    assert receipt.outcome == "cancelled"
+    metadata_receipt = vars(raised.value)["metadata"]["receipt"]
+    assert metadata_receipt["operation"] == receipt.operation
+    assert metadata_receipt["target"] == receipt.target.to_dict()
+    assert metadata_receipt["outcome"] == receipt.outcome
+
+
 def test_controlled_sync_dispatch_keeps_factory_bound_operations_after_helper_override() -> None:
     transport, client = _sync_client(
         _routes(
