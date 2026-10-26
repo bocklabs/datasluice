@@ -10,12 +10,15 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import date
 from functools import cached_property, lru_cache, partial
-from importlib import resources
 from time import monotonic, sleep
 from typing import TYPE_CHECKING, ClassVar, Self, TypedDict, Unpack, cast
 from urllib.parse import urlsplit
 
-from datasluice.connectors.catalog.udata.compatibility import UDATA_PROFILE_RESOURCE, UDataRouteGate
+from datasluice.connectors.catalog.udata.compatibility import (
+    UDATA_PROFILE_RESOURCE,
+    UDataRouteGate,
+    udata_profile_document,
+)
 from datasluice.connectors.catalog.udata.mapping import (
     _DATASETS_OPERATION_ID,
     _PAGED_PATH,
@@ -390,9 +393,7 @@ def _operation_id_from(value: str) -> OperationId:
 @lru_cache(maxsize=1)
 def declared_udata_profile() -> DeclaredCapabilityProfile:
     """Load and pin the checked-in uData capability profile."""
-    document = json.loads(
-        resources.files("datasluice.contracts").joinpath(UDATA_PROFILE_RESOURCE).read_text(encoding="utf-8")
-    )
+    document = udata_profile_document()
     if document.get("platform") != PLATFORM.value:
         raise ValueError(f"The pinned {UDATA_PROFILE_RESOURCE} does not declare the uData platform.")
     operations: dict[OperationId, OperationSpec] = {}
@@ -1387,7 +1388,7 @@ class _UDataClientCore(metaclass=_ImmutableClientType):
             clock=clock,
         )
         self._profile = self._capabilities.baseline_profile
-        self._route_gate = UDataRouteGate(self._origin, transport, settings.capability_cache_ttl, clock)
+        self._route_gate = UDataRouteGate(self._origin, transport, settings.capability_cache_ttl, clock=clock)
         if site_gate is not None:
             self._site_gate: SiteVersionGate | AsyncSiteVersionGate = site_gate
         elif not async_gate:
@@ -1982,7 +1983,6 @@ class SyncUDataClient(_UDataClientCore):
     def _admit_route(
         self, owning_id: OperationId, method: str, path: str, *, deadline: DeadlineMonitor | None = None
     ) -> None:
-        self._require_route_operation(owning_id)
         observed = self._require_site_version(deadline=deadline)
         self._route_gate.require(method, path, str(owning_id), observed.version, deadline)
 
@@ -2029,6 +2029,7 @@ class SyncUDataClient(_UDataClientCore):
     ) -> tuple[int, object, RuntimeResponse]:
         """Run one guarded dataset request scoped to its owning route operation."""
         owning_id, deadline = self._dataset_deadline(owning_operation, overrides, _SYNC_UDATA_CLIENT_CLOSED)
+        self._require_route_operation(owning_id)
         self._admit_route(owning_id, method, path, deadline=deadline)
         if overrides.get("omit_credential", False):
             resolved_credential = None
@@ -2119,6 +2120,7 @@ class SyncUDataClient(_UDataClientCore):
             if self._closed:
                 raise RuntimeError(_SYNC_UDATA_CLIENT_CLOSED)
             deadline = DeadlineMonitor(self._budget, clock=self._clock)
+            self._require_route_operation(owning_id)
             self._admit_route(owning_id, "GET", path, deadline=deadline)
             resolved_credential = credential if credential is not None else _refreshed_credential(self._credentials)
             scope = _credential_scope(resolved_credential)
@@ -2201,13 +2203,11 @@ class SyncUDataClient(_UDataClientCore):
     ) -> ResultEnvelope[UDataResultItem]:
         if self._closed:
             raise RuntimeError(_SYNC_UDATA_CLIENT_CLOSED)
-        if operation.operation_id not in self._profile.declared_profile.operations:
-            self._require_route_operation(operation.operation_id)
+        self._require_route_operation(operation.operation_id)
         _enforce_caller_guards(operation, guard)
         if operation.operation_id != owning_id:
             raise unimplemented_family(str(operation.operation_id))
         deadline = DeadlineMonitor(self._budget, clock=self._clock)
-        self._require_site_version(deadline=deadline)
         params = self._validate_page_params(operation)
         request = _page_request(origin=self._origin, params=params, deadline=deadline)
         self._admit_route(owning_id, request.method, request.url, deadline=deadline)
@@ -2460,7 +2460,6 @@ class AsyncUDataClient(_UDataClientCore):
     async def _admit_route_async(
         self, owning_id: OperationId, method: str, path: str, *, deadline: DeadlineMonitor | None = None
     ) -> None:
-        self._require_route_operation(owning_id)
         observed = await self.site_version(deadline=deadline)
         await self._route_gate.require_async(method, path, str(owning_id), observed.version, deadline)
 
@@ -2480,13 +2479,11 @@ class AsyncUDataClient(_UDataClientCore):
     ) -> ResultEnvelope[UDataResultItem]:
         if self._closed:
             raise RuntimeError(_ASYNC_UDATA_CLIENT_CLOSED)
-        if operation.operation_id not in self._profile.declared_profile.operations:
-            self._require_route_operation(operation.operation_id)
+        self._require_route_operation(operation.operation_id)
         _enforce_caller_guards(operation, guard)
         if operation.operation_id != owning_id:
             raise unimplemented_family(str(operation.operation_id))
         deadline = DeadlineMonitor(self._budget, clock=self._clock)
-        await self.site_version(deadline=deadline)
         params = self._validate_page_params(operation)
         request = _page_request(origin=self._origin, params=params, deadline=deadline)
         await self._admit_route_async(owning_id, request.method, request.url, deadline=deadline)
@@ -2646,6 +2643,7 @@ class AsyncUDataClient(_UDataClientCore):
         owning_id = _operation_id_from(owning_operation)
         deadline = overrides.get("deadline") or DeadlineMonitor(self._budget, clock=self._clock)
         deadline.assert_dispatchable(str(owning_id), PLATFORM.value)
+        self._require_route_operation(owning_id)
         await self._admit_route_async(owning_id, method, path, deadline=deadline)
         if omit_credential:
             resolved_credential = None
@@ -2766,6 +2764,7 @@ class AsyncUDataClient(_UDataClientCore):
             if self._closed:
                 raise RuntimeError(_ASYNC_UDATA_CLIENT_CLOSED)
             deadline = DeadlineMonitor(self._budget, clock=self._clock)
+            self._require_route_operation(owning_id)
             await self._admit_route_async(owning_id, "GET", path, deadline=deadline)
             resolved_credential = (
                 credential if credential is not None else await _refreshed_credential_async(self._credentials)

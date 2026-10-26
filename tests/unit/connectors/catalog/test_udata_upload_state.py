@@ -35,7 +35,11 @@ from tests.helpers.udata_test_support import swagger_response
 
 _UPLOAD_ROUTES = {
     ("POST", path): None
-    for path in ("/api/1/datasets/{dataset}/upload/", "/api/1/datasets/{dataset}/resources/{resource}/upload/")
+    for path in (
+        "/api/1/datasets/{dataset}/upload/",
+        "/api/1/datasets/{dataset}/resources/{resource}/upload/",
+        "/api/1/datasets/community_resources/{resource}/upload/",
+    )
 }
 
 

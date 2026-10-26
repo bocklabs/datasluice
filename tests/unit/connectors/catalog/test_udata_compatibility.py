@@ -9,6 +9,7 @@ import pytest
 
 from datasluice.connectors.catalog.udata.clients import AsyncUDataClient, SyncUDataClient, declared_udata_profile
 from datasluice.connectors.catalog.udata.compatibility import UDataRouteGate, UDataRouteSurface, udata_version_policy
+from datasluice.connectors.catalog.udata.probes import UDataVersionError
 from datasluice.errors.catalog import (
     CatalogError,
     CatalogUnavailableError,
@@ -127,6 +128,9 @@ def test_unsupported_typed_path_is_refused_without_dispatch_or_caller_data() -> 
 @pytest.mark.parametrize("version", ["17.0.0", "17.6.0", "17.16.0", "17.999.0"])
 def test_profile_version_range_accepts_the_complete_major_line(version: str) -> None:
     assert udata_version_policy().accepts(version)
+
+
+def test_profile_version_is_pinned() -> None:
     assert declared_udata_profile().profile_version == "17.6.0"
 
 
@@ -205,11 +209,14 @@ def test_removed_dataset_method_blocks_dispatch(methods: dict[str, object]) -> N
         ).encode(),
     )
     transport = SurfaceTransport(response)
-    client = SyncUDataClient(transport, declared_udata_profile(), origin="http://127.0.0.1:5640")
-    with pytest.raises(UnsupportedCapabilityError) as raised:
+    with (
+        SyncUDataClient(transport, declared_udata_profile(), origin="http://127.0.0.1:5640") as client,
+        pytest.raises(UnsupportedCapabilityError) as raised,
+    ):
         client.datasets_list(*_datasets_operation())
     assert len(transport.requests) == 2
     assert raised.value.metadata["route_state"] == "absent"
+    assert raised.value.metadata["method"] == "GET"
 
 
 @pytest.mark.parametrize(
@@ -229,6 +236,7 @@ def test_unverifiable_surface_fails_closed(response: RuntimeResponse | Exception
     with pytest.raises(CatalogUnavailableError) as raised:
         client.datasets_list(*_datasets_operation())
     assert len(transport.requests) == 2
+    assert transport.requests[1].url.endswith("/api/1/swagger.json")
     assert raised.value.metadata["route_state"] == "unavailable"
     assert "private" not in str(raised.value)
 
@@ -333,19 +341,27 @@ def test_sync_native_entry_points_share_route_admission(entry: str) -> None:
         }
         with pytest.raises(UnsupportedCapabilityError) as raised:
             calls[entry]()
+        assert raised.value.metadata["route_state"] == "absent"
         assert "private-id" not in str(raised.value.metadata)
     assert len(transport.requests) == 2
 
 
 class AsyncSurfaceTransport:
     def __init__(self, surface: RuntimeResponse | Exception) -> None:
-        self.router = SurfaceTransport(surface)
+        self.surface = surface
+        self.router = RecordingAsyncTransport(site_version="17.16.0")
 
     async def send(self, request: RuntimeRequest) -> RuntimeResponse:
-        return self.router.send(request)
+        if request.url.endswith("/swagger.json"):
+            self.router.requests.append(request)
+            assert not request.headers
+            if isinstance(self.surface, Exception):
+                raise self.surface
+            return self.surface
+        return await self.router.send(request)
 
     async def aclose(self) -> None:
-        self.router.close()
+        await self.router.aclose()
 
 
 @pytest.mark.parametrize("entry", ["detail", "site", "stream", "redirect", "v2"])
@@ -366,8 +382,10 @@ def test_async_native_entry_points_share_route_admission(entry: str) -> None:
             "stream": lambda: client.root_profile.datasets_csv(sink=lambda _: None),
             "redirect": lambda: client.resources.redirect("private-id"),
         }
-        with pytest.raises(UnsupportedCapabilityError):
+        with pytest.raises(UnsupportedCapabilityError) as raised:
             await calls[entry]()
+        assert raised.value.metadata["route_state"] == "absent"
+        assert "private-id" not in str(raised.value.metadata)
         await client.aclose()
 
     asyncio.run(run())
@@ -469,7 +487,9 @@ def test_refresh_during_an_async_probe_does_not_restore_stale_evidence(probe_pat
         )
 
         class PendingSurfaceTransport(AsyncSurfaceTransport):
-            probes = 0
+            def __init__(self, surface: RuntimeResponse | Exception) -> None:
+                super().__init__(surface)
+                self.probes = 0
 
             async def send(self, request: RuntimeRequest) -> RuntimeResponse:
                 if request.url.endswith(probe_path):
@@ -485,7 +505,12 @@ def test_refresh_during_an_async_probe_does_not_restore_stale_evidence(probe_pat
         await asyncio.wait_for(started.wait(), timeout=1)
         client.invalidate()
         release.set()
-        await pending
+        if probe_path == "/api/1/site/":
+            with pytest.raises(UDataVersionError) as raised:
+                await pending
+            assert raised.value.version_state == "invalidated"
+        else:
+            await pending
         await client.datasets_list(*_datasets_operation())
         assert transport.probes == 2
         await client.aclose()

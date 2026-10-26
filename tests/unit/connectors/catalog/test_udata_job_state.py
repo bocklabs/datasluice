@@ -34,6 +34,7 @@ def short_budget() -> TimeBudget:
 
 
 TASK_URL = f"{ORIGIN}/api/1/workers/tasks/wheel-task/"
+_TASK_ROUTES = {("GET", TASK_URL): None}
 _SITE_RESPONSE = RuntimeResponse(
     status_code=200,
     headers={"Content-Type": "application/json"},
@@ -74,7 +75,7 @@ class PollingRouter:
         )
 
     def route(self, request: RuntimeRequest) -> RuntimeResponse:
-        if response := swagger_response(request, {("GET", TASK_URL): None}):
+        if response := swagger_response(request, _TASK_ROUTES):
             return response
         if request.url == f"{ORIGIN}/api/1/site/":
             return _SITE_RESPONSE

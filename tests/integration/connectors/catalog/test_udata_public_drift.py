@@ -8,6 +8,7 @@ import sys
 
 import pytest
 
+from datasluice.connectors.catalog.udata.compatibility import udata_version_policy
 from datasluice.connectors.catalog.udata.drift import (
     APPROVED_TARGETS,
     DRIFT_SCHEMA_VERSION,
@@ -69,7 +70,7 @@ def test_t01_the_entry_point_exits_disabled_and_names_no_target() -> None:
     assert report["status"] == "disabled"
     assert report["approved_targets"] == 0
     assert report["schema_version"] == DRIFT_SCHEMA_VERSION
-    assert report["supported_range"] == ">=17.0.0,<18.0.0"
+    assert report["supported_range"] == udata_version_policy().supported_range
 
 
 def test_t02_the_disabled_report_publishes_only_bounds_and_no_content() -> None:

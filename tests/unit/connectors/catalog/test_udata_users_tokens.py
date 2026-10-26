@@ -666,7 +666,7 @@ def test_sync_interruption_after_dispatch_retains_cancelled_target_receipt() -> 
                 raise KeyboardInterrupt
             return super().send(request)
 
-    router = _InterruptedRouter(_routes(("POST", "/api/1/me/api_tokens/", 200, {})))
+    router = _InterruptedRouter(_routes(("POST", "/api/1/me/api_tokens/", 200, None)))
     client = SyncUDataClient(router, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL)
     token_input = ApiTokenCreateInput()
     policy = _policy("create_api_token", "new-api-token")
@@ -687,7 +687,7 @@ def test_sync_generator_exit_after_dispatch_retains_cancelled_target_receipt() -
                 raise GeneratorExit
             return super().send(request)
 
-    router = _AbandonedRouter(_routes(("POST", "/api/1/me/api_tokens/", 200, {})))
+    router = _AbandonedRouter(_routes(("POST", "/api/1/me/api_tokens/", 200, None)))
     client = SyncUDataClient(router, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL)
     token = ApiTokenCreateInput()
     policy = _policy("create_api_token", "new-api-token")

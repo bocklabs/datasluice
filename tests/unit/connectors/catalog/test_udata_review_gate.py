@@ -91,34 +91,46 @@ def test_capture_and_verify_accepts_complete_separate_reviewer_evidence(tmp_path
     assert directory == tmp_path / "reviews" / "tracer" / HEAD
 
 
+def test_clean_review_requires_a_nonblank_source_review(tmp_path: Path) -> None:
+    with pytest.raises(review_gate.ReviewGateError, match="nonblank source review"):
+        _capture(tmp_path, clean=True, source_content="")
+
+    assert not (tmp_path / "reviews" / "tracer" / HEAD).exists()
+
+
 @pytest.mark.parametrize(
-    ("field", "value"),
+    ("field", "value", "message"),
     [
-        ("clean_review", None),
-        ("clean_review", []),
-        ("clean_review", {}),
-        ("verdict", "fixed"),
-        ("reviewer_id", "other-reviewer"),
-        ("reviewer_id", " "),
-        ("source_review_sha256", "0" * 64),
-        ("source_review_sha256", "A" * 64),
-        ("scope", []),
-        ("scope", [" "]),
-        ("scope", [None]),
-        ("evidence", "source.py"),
-        ("evidence", []),
-        ("evidence", [" "]),
-        ("method", " "),
-        ("limitations", None),
-        ("method", "raw_response: retained"),
-        ("reviewed_sha", BASE),
-        ("threads", _threads()["threads"]),
-        ("threads", _threads(classification="valid")["threads"]),
-    ]
-    + [(field, None) for field in ("verdict", "reviewer_id", "source_review_sha256", "scope", "evidence", "method")],
+        ("clean_review", None, "must contain classified findings"),
+        ("clean_review", [], "attestation must be an object"),
+        ("clean_review", {}, "requires nonblank verdict"),
+        ("verdict", "fixed", "verdict must be no_findings"),
+        ("reviewer_id", "other-reviewer", "reviewer does not match receipt identity"),
+        ("reviewer_id", " ", "requires nonblank reviewer_id"),
+        ("source_review_sha256", "0" * 64, "report digest does not match source review"),
+        ("source_review_sha256", "A" * 64, "report digest does not match source review"),
+        ("scope", [], "requires nonempty scope references"),
+        ("scope", [" "], "requires nonempty scope references"),
+        ("scope", [None], "requires nonempty scope references"),
+        ("evidence", "source.py", "requires nonempty evidence references"),
+        ("evidence", [], "requires nonempty evidence references"),
+        ("evidence", [" "], "requires nonempty evidence references"),
+        ("method", " ", "requires nonblank method"),
+        ("limitations", None, "requires nonblank limitations"),
+        ("method", "raw_response: retained", "sensitive content"),
+        ("reviewed_sha", BASE, "not bound to the reviewed SHA"),
+        ("threads", _threads()["threads"], "clean review cannot contain findings"),
+        ("threads", _threads(classification="valid")["threads"], "clean review cannot contain findings"),
+        ("verdict", None, "requires nonblank verdict"),
+        ("reviewer_id", None, "requires nonblank reviewer_id"),
+        ("source_review_sha256", None, "requires nonblank source_review_sha256"),
+        ("scope", None, "requires nonempty scope references"),
+        ("evidence", None, "requires nonempty evidence references"),
+        ("method", None, "requires nonblank method"),
+    ],
 )
 def test_clean_review_rejects_invalid_attestation_before_publication_and_on_verify(
-    tmp_path: Path, field: str, value: object
+    tmp_path: Path, field: str, value: object, message: str
 ) -> None:
     directory = _capture(tmp_path, clean=True)
     threads = directory / "current-thread.json"
@@ -134,7 +146,6 @@ def test_clean_review_rejects_invalid_attestation_before_publication_and_on_veri
     receipt["current_thread_sha256"] = review_gate.digest_file(threads)
     receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
 
-    message = "clean review cannot contain findings" if field == "threads" else None
     with pytest.raises(review_gate.ReviewGateError, match=message):
         review_gate.verify_review(tmp_path / "reviews", "tracer", HEAD)
     with pytest.raises(review_gate.ReviewGateError, match=message):

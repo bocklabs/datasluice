@@ -73,6 +73,42 @@ assert datasluice.__file__ and datasluice.__file__.startswith(sys.argv[1])
 op_id = next(op for op in declared_udata_profile().operations if op.method == "list-datasets")
 
 JSON_HEADERS = {"Content-Type": "application/json"}
+_MALFORMED_DATASET_URL = "http://127.0.0.1:5640/api/1/datasets/abc/"
+_EXPECTED_METHODS = {
+    "http://127.0.0.1:5640/api/1/contacts/": frozenset({"POST"}),
+    "http://127.0.0.1:5640/api/1/contacts/wheel-contact/": frozenset({"DELETE", "GET", "PUT"}),
+    "http://127.0.0.1:5640/api/1/datasets/": frozenset({"GET", "POST"}),
+    "http://127.0.0.1:5640/api/1/datasets/abc/badges/": frozenset({"POST"}),
+    "http://127.0.0.1:5640/api/1/datasets/abc/badges/pivotal-data/": frozenset({"DELETE"}),
+    "http://127.0.0.1:5640/api/1/datasets/abc/resources/": frozenset({"POST"}),
+    "http://127.0.0.1:5640/api/1/datasets/abc/upload/": frozenset({"POST"}),
+    "http://127.0.0.1:5640/api/1/discussions/": frozenset({"GET", "POST"}),
+    "http://127.0.0.1:5640/api/1/discussions/wheel-discussion/": frozenset({"DELETE", "GET", "POST", "PUT"}),
+    "http://127.0.0.1:5640/api/1/discussions/wheel-discussion/comments/0/": frozenset({"PUT"}),
+    "http://127.0.0.1:5640/api/1/discussions/wheel-discussion/comments/1/": frozenset({"DELETE"}),
+    "http://127.0.0.1:5640/api/1/harvest/sources/": frozenset({"POST"}),
+    "http://127.0.0.1:5640/api/1/me/api_tokens/": frozenset({"GET", "POST"}),
+    "http://127.0.0.1:5640/api/1/me/api_tokens/wheel-token-id/": frozenset({"DELETE"}),
+    "http://127.0.0.1:5640/api/1/notifications/wheel-notification/read/": frozenset({"POST"}),
+    "http://127.0.0.1:5640/api/1/organizations/": frozenset({"POST"}),
+    "http://127.0.0.1:5640/api/1/reports/": frozenset({"POST"}),
+    "http://127.0.0.1:5640/api/1/reports/wheel-report/": frozenset({"GET", "PATCH"}),
+    "http://127.0.0.1:5640/api/1/reuses/": frozenset({"POST"}),
+    "http://127.0.0.1:5640/api/1/reuses/wheel-reuse/": frozenset({"DELETE", "GET"}),
+    "http://127.0.0.1:5640/api/1/reuses/wheel-reuse/datasets/": frozenset({"POST"}),
+    "http://127.0.0.1:5640/api/1/transfer/": frozenset({"POST"}),
+    "http://127.0.0.1:5640/api/1/visualizations/": frozenset({"POST"}),
+    "http://127.0.0.1:5640/api/1/visualizations/wheel-viz/": frozenset({"DELETE", "GET", "PATCH"}),
+    "http://127.0.0.1:5640/api/1/visualizations/wheel-viz/image/": frozenset({"POST"}),
+    "http://127.0.0.1:5640/api/1/workers/jobs/": frozenset({"GET", "POST"}),
+    "http://127.0.0.1:5640/api/2/topics/": frozenset({"POST"}),
+    "http://127.0.0.1:5640/api/2/topics/wheel-topic/": frozenset({"DELETE", "GET", "PUT"}),
+    "http://127.0.0.1:5640/api/2/topics/wheel-topic/elements/": frozenset({"POST"}),
+    "http://127.0.0.1:5640/api/2/topics/wheel-topic/elements/wheel-element/": frozenset({"DELETE", "PUT"}),
+    "http://127.0.0.1:5640/api/2/topics/wheel-topic/featured/": frozenset({"DELETE", "POST"}),
+    "http://127.0.0.1:5640/oauth/revoke": frozenset({"POST"}),
+    "http://127.0.0.1:5640/oauth/token": frozenset({"POST"}),
+}
 
 
 def _json(payload):
@@ -130,10 +166,11 @@ def _assert_token_material_absent(result, minted, label):
 def _wheel_swagger(url):
     base = urlsplit(url).path.removesuffix("/swagger.json")
     paths: dict[str, dict[str, object]] = {}
-    for target in _EXPECTED + _ASYNC_EXPECTED + ["http://127.0.0.1:5640/api/1/datasets/abc/"]:
+    for target in _EXPECTED + _ASYNC_EXPECTED + [_MALFORMED_DATASET_URL]:
         path = urlsplit(target).path
         if path.startswith(base + "/"):
-            paths[path.removeprefix(base)] = {method: {} for method in ("get", "post", "put", "patch", "delete")}
+            methods = _EXPECTED_METHODS.get(target, frozenset({"GET"}))
+            paths.setdefault(path.removeprefix(base), {}).update({method.lower(): {} for method in methods})
     return _json({"swagger": "2.0", "basePath": base, "paths": paths})
 
 
@@ -1811,6 +1848,16 @@ def main() -> None:
     assert organization_created.receipt.operation == "udata/api-v1.create-organization"
     assert organization_created.receipt.outcome == "succeeded"
     assert organization_created.receipt.audit_metadata["status_code"] == 201
+    sync_swagger = [url for url in transport.requests if url.endswith("/swagger.json")]
+    async_swagger = [url for url in async_transport.requests if url.endswith("/swagger.json")]
+    expected_swagger = {
+        "http://127.0.0.1:5640/api/1/swagger.json",
+        "http://127.0.0.1:5640/api/2/swagger.json",
+    }
+    assert len(sync_swagger) == 2
+    assert set(sync_swagger) == expected_swagger
+    assert len(async_swagger) == 2
+    assert set(async_swagger) == expected_swagger
     recorded = [getattr(r, "url", r) for r in transport.requests if not str(r).endswith("/swagger.json")]
     expected = _EXPECTED
     assert recorded == expected
@@ -1823,13 +1870,14 @@ def main() -> None:
 
     class MalformedTransport(Transport):
         def send(self, request):
-            if request.url.endswith("/api/1/datasets/abc/"):
-                self.requests.append(request.url)
+            if request.url == _MALFORMED_DATASET_URL:
+                self.requests.append(request)
                 return RuntimeResponse(status_code=200, headers={}, body=b"{")
             return Transport.send(self, request)
 
+    malformed_transport = MalformedTransport()
     malformed = create_sync_client(
-        UDataClientSettings(base_url="http://127.0.0.1:5640", sync_transport=MalformedTransport())
+        UDataClientSettings(base_url="http://127.0.0.1:5640", sync_transport=malformed_transport)
     )
     try:
         malformed.datasets.get("abc")
@@ -1837,6 +1885,11 @@ def main() -> None:
         assert error.status_code == 200
     else:
         raise AssertionError("malformed installed-wheel response was accepted")
+    assert [
+        (request.method, request.url)
+        for request in malformed_transport.requests
+        if getattr(request, "url", None) == _MALFORMED_DATASET_URL
+    ] == [("GET", _MALFORMED_DATASET_URL)]
     malformed.close()
 
     blocked_transport = Transport(version="18.0.0")

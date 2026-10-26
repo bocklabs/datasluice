@@ -251,6 +251,13 @@ class DriftTarget:
                 platform=PLATFORM.value,
                 safe_action="Approve at least the site version probe read for every drift target.",
             )
+        if any(not isinstance(read, str) for read in self.reads):
+            raise CatalogValidationError(
+                "Drift target reads must be string operation identities.",
+                operation=DRIFT_OPERATION,
+                platform=PLATFORM.value,
+                safe_action="Use reviewed read operation identities from the approved allowlist.",
+            )
         if len(self.reads) > MAX_READS_PER_TARGET:
             raise CatalogValidationError(
                 f"Drift targets cannot carry more than {MAX_READS_PER_TARGET} bounded reads.",

@@ -178,10 +178,18 @@ class SiteVersionGate:
                 return cached[0]
             generation = self._generation
         observed = self._probe(deadline)
-        with self._lock:
-            if generation == self._generation:
-                self._cache[scope] = (observed, self._clock())
+        self._publish(scope, observed, generation)
         return observed
+
+    def _publish(self, scope: str, observed: SiteVersion, generation: int) -> None:
+        with self._lock:
+            if generation != self._generation:
+                raise UDataVersionError(
+                    version_state="invalidated",
+                    message="The uData site-version evidence was invalidated while the probe was active.",
+                    safe_action="Retry the site-version probe on the active client.",
+                )
+            self._cache[scope] = (observed, self._clock())
 
     def invalidate(self) -> None:
         """Discard all cached site-version evidence."""
@@ -244,9 +252,15 @@ class SiteVersionGate:
                 message=f"The uData site probe returned HTTP {response.status_code}.",
                 safe_action="Verify the deployment origin exposes the stock /api/1/site/ document.",
             )
+        if len(response.body) > _SITE_PROBE_MAX_BYTES:
+            raise UDataVersionError(
+                version_state="oversized",
+                message="The uData site probe response exceeds the supported size.",
+                safe_action="Verify the deployment serves the stock /api/1/site/ document within the probe limit.",
+            )
         invalid_payload = False
         try:
-            payload = strict_json(response.body) if len(response.body) <= _SITE_PROBE_MAX_BYTES else None
+            payload = strict_json(response.body)
         except (TypeError, ValueError, RecursionError):
             invalid_payload = True
             payload = None
@@ -302,9 +316,7 @@ class AsyncSiteVersionGate(SiteVersionGate):
                 return cached[0]
             generation = self._generation
         observed = await self._probe_async(deadline)
-        with self._lock:
-            if generation == self._generation:
-                self._cache[scope] = (observed, self._clock())
+        self._publish(scope, observed, generation)
         return observed
 
     async def _probe_async(self, deadline: DeadlineMonitor | None = None) -> SiteVersion:

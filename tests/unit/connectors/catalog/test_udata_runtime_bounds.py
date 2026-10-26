@@ -169,7 +169,13 @@ def test_wait_transport_uses_the_lease_deadline(
 
     def response(request: RuntimeRequest) -> RuntimeResponse:
         if result := swagger_response(
-            request, {("GET", "/api/1/harvest/job/job/"): None, ("GET", "/api/1/workers/tasks/job/"): None}
+            request,
+            with_site_route(
+                {
+                    ("GET", "/api/1/harvest/job/job/"): (200, {}),
+                    ("GET", "/api/1/workers/tasks/job/"): (200, {}),
+                }
+            ),
         ):
             return result
         if request.url.endswith("/api/1/site/"):

@@ -136,6 +136,8 @@ def _git_head(repo_root: Path) -> str:
 def _validate_clean_review(attestation: object, source_review: Path, reviewer_id: str) -> None:
     if not isinstance(attestation, dict):
         raise ReviewGateError("clean review attestation must be an object")
+    if not source_review.read_text(encoding="utf-8").strip():
+        raise ReviewGateError("clean review requires a nonblank source review")
     for field in ("verdict", "reviewer_id", "source_review_sha256", "method", "limitations"):
         value = attestation.get(field)
         if not isinstance(value, str) or not value.strip():

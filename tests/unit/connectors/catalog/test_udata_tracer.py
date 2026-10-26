@@ -175,7 +175,7 @@ def test_unknown_payload_parameters_are_rejected_before_dispatch() -> None:
     with pytest.raises(CatalogValidationError):
         client.datasets_list(operation, guard)
 
-    assert len(transport.requests) == 1
+    assert transport.requests == []
 
 
 def test_owned_transport_closes_once_and_borrowed_never() -> None:
@@ -337,26 +337,27 @@ def test_dataset_read_rejects_late_custom_transport_success(asynchronous: bool) 
         async def send(self, request: RuntimeRequest) -> RuntimeResponse:
             return transport.send(request)
 
-    with pytest.raises(BudgetExhaustedError):
-        if asynchronous:
-            client = AsyncUDataClient(
-                AsyncTransport(),
-                declared_udata_profile(),
-                origin="https://example.test",
-                owns_transport=False,
-                budget=TimeBudget(1, 1, 1, 1),
-                clock=lambda: now[0],
-            )
+    if asynchronous:
+        client = AsyncUDataClient(
+            AsyncTransport(),
+            declared_udata_profile(),
+            origin="https://example.test",
+            owns_transport=False,
+            budget=TimeBudget(1, 1, 1, 1),
+            clock=lambda: now[0],
+        )
+        with pytest.raises(BudgetExhaustedError):
             asyncio.run(client.datasets_list(*_datasets_operation()))
-        else:
-            sync_client = SyncUDataClient(
-                transport,
-                declared_udata_profile(),
-                origin="https://example.test",
-                owns_transport=False,
-                budget=TimeBudget(1, 1, 1, 1),
-                clock=lambda: now[0],
-            )
+    else:
+        sync_client = SyncUDataClient(
+            transport,
+            declared_udata_profile(),
+            origin="https://example.test",
+            owns_transport=False,
+            budget=TimeBudget(1, 1, 1, 1),
+            clock=lambda: now[0],
+        )
+        with pytest.raises(BudgetExhaustedError):
             sync_client.datasets_list(*_datasets_operation())
 
 

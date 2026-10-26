@@ -1394,6 +1394,8 @@ def test_dataset_validation_errors_exclude_arbitrary_response_keys(asynchronous:
                 else:
                     client.datasets_list(request, guard)
     assert "response-secret-" not in str(raised.value)
+    assert raised.value.operation == str(operation_id)
+    assert "extension" in str(raised.value)
     assert len(str(raised.value)) < 256
     assert marker not in str(raised.value.metadata)
 

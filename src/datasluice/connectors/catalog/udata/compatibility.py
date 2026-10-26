@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 from importlib import resources
 from time import monotonic
-from typing import TYPE_CHECKING, Never, cast
+from typing import TYPE_CHECKING, Any, Never, cast
 from urllib.parse import urlsplit
 
 from datasluice.errors.catalog import (
@@ -60,10 +60,19 @@ class UDataVersionPolicy:
 
 
 @lru_cache(maxsize=1)
-def udata_version_policy() -> UDataVersionPolicy:
+def udata_profile_document() -> dict[str, Any]:
+    """Return the parsed packaged uData profile."""
     document = json.loads(
         resources.files("datasluice.contracts").joinpath(UDATA_PROFILE_RESOURCE).read_text(encoding="utf-8")
     )
+    if not isinstance(document, dict):
+        raise ValueError("The packaged uData profile must be a JSON object.")
+    return document
+
+
+@lru_cache(maxsize=1)
+def udata_version_policy() -> UDataVersionPolicy:
+    document = udata_profile_document()
     policy = document["compatibility"]
     return UDataVersionPolicy(policy["minimum"], policy["maximum_exclusive"])
 
@@ -163,7 +172,7 @@ class UDataRouteGate:
             self._cache.clear()
 
     @staticmethod
-    def api_version(method: str, path: str) -> str | None:
+    def api_version(path: str) -> str | None:
         path = urlsplit(path).path
         if path.startswith("/oauth/"):
             return None
@@ -228,7 +237,7 @@ class UDataRouteGate:
         observed_version: str,
         deadline: DeadlineMonitor | None = None,
     ) -> None:
-        api = self.api_version(method, path)
+        api = self.api_version(path)
         if api is None:
             return
         with self._lock:
@@ -256,11 +265,12 @@ class UDataRouteGate:
         observed_version: str,
         deadline: DeadlineMonitor | None = None,
     ) -> None:
-        api = self.api_version(method, path)
+        api = self.api_version(path)
         if api is None:
             return
         async with self._async_lock_for():
-            surface = self._cached(api)
+            with self._lock:
+                surface = self._cached(api)
             if surface is None:
                 generation = self._generation
                 try:
