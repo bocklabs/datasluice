@@ -23,7 +23,7 @@ PLATFORM = CatalogPlatform.UDATA
 
 NATIVE_PAGE_FIELDS = ("data", "page", "page_size", "previous_page", "next_page", "total")
 _PAGED_PATH = "/api/1/datasets/"
-_DATASETS_OPERATION_ID = "udata/api-v1.dataset-list-search-show-create-update-delete"
+_DATASETS_OPERATION_ID = "udata/api-v1.list-datasets"
 
 
 @dataclass(frozen=True, slots=True)
@@ -186,7 +186,9 @@ def parse_native_page(payload: object, *, operation: str = _DATASETS_OPERATION_I
     )
 
 
-def parse_dataset_summary(item: Mapping[str, object], *, operation: str = _DATASETS_OPERATION_ID) -> NativeRecord:
+def parse_dataset_summary(
+    item: Mapping[str, object], *, operation: str = _DATASETS_OPERATION_ID, status_code: int | None = None
+) -> NativeRecord:
     """Redact credential-bearing fields before the dataset item enters a runtime record.
 
     Preserve all other fields. Use ``to_evidence_dict`` for bounded evidence without field values.
@@ -196,7 +198,7 @@ def parse_dataset_summary(item: Mapping[str, object], *, operation: str = _DATAS
     """
     from datasluice.connectors.catalog.udata.wire.datasets import _validate_dataset_fields
 
-    _validate_dataset_fields(item, operation=operation, detail=False)
+    _validate_dataset_fields(item, operation=operation, detail=False, status_code=status_code)
     identifier = cast("str", item["id"])
     return NativeRecord(
         platform=PLATFORM,
@@ -242,9 +244,11 @@ def shape_native_page(page: NativePage, records: tuple[UDataResultItem, ...]) ->
     return UDataPageEnvelope(items=records, page=page_info, platform=metadata, native_page=native_page)
 
 
-def shape_dataset_page(page: NativePage, *, operation: str = _DATASETS_OPERATION_ID) -> UDataPageEnvelope:
+def shape_dataset_page(
+    page: NativePage, *, operation: str = _DATASETS_OPERATION_ID, status_code: int | None = None
+) -> UDataPageEnvelope:
     """Shape one decoded native page into the typed result envelope."""
-    records = tuple(parse_dataset_summary(item, operation=operation) for item in page.items)
+    records = tuple(parse_dataset_summary(item, operation=operation, status_code=status_code) for item in page.items)
     return shape_native_page(page, records)
 
 

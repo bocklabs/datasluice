@@ -4,6 +4,7 @@ import secrets
 import sys
 from io import BytesIO
 from typing import cast
+from urllib.parse import urlsplit
 
 import datasluice
 from datasluice.connectors.catalog.udata.clients import create_async_client, create_sync_client, declared_udata_profile
@@ -69,9 +70,7 @@ from datasluice.runtime.transport.base import AsyncRuntimeStreamResponse, Runtim
 
 assert datasluice.__file__ and datasluice.__file__.startswith(sys.argv[1])
 
-op_id = next(
-    op for op in declared_udata_profile().operations if op.method == "dataset-list-search-show-create-update-delete"
-)
+op_id = next(op for op in declared_udata_profile().operations if op.method == "list-datasets")
 
 JSON_HEADERS = {"Content-Type": "application/json"}
 
@@ -128,8 +127,20 @@ def _assert_token_material_absent(result, minted, label):
     assert not leaked, f"{label} retained the minted token in {leaked}"
 
 
+def _wheel_swagger(url):
+    base = urlsplit(url).path.removesuffix("/swagger.json")
+    paths: dict[str, dict[str, object]] = {}
+    for target in _EXPECTED + _ASYNC_EXPECTED + ["http://127.0.0.1:5640/api/1/datasets/abc/"]:
+        path = urlsplit(target).path
+        if path.startswith(base + "/"):
+            paths[path.removeprefix(base)] = {method: {} for method in ("get", "post", "put", "patch", "delete")}
+    return _json({"swagger": "2.0", "basePath": base, "paths": paths})
+
+
 def _site_response(transport, url, method):
     """Return the stub for a site, account, or API token route."""
+    if url.endswith("/swagger.json"):
+        return _wheel_swagger(url)
     if url.endswith("/api/1/site/"):
         return _json(
             {
@@ -512,8 +523,179 @@ def _jobs_response(url, method):
     return None
 
 
+_EXPECTED = [
+    "http://127.0.0.1:5640/api/1/site/",
+    "http://127.0.0.1:5640/api/1/dataservices/wheel-dataservice/",
+    "http://127.0.0.1:5640/api/1/site/",
+    "http://127.0.0.1:5640/api/1/site/datasets.csv",
+    "http://127.0.0.1:5640/api/1/datasets/",
+    "http://127.0.0.1:5640/api/1/datasets/?page=1&page_size=20",
+    "http://127.0.0.1:5640/api/1/organizations/abc/",
+    "http://127.0.0.1:5640/api/1/datasets/abc/resources/",
+    "http://127.0.0.1:5640/api/1/datasets/abc/upload/",
+    "http://127.0.0.1:5640/api/1/organizations/",
+    "http://127.0.0.1:5640/api/1/me/",
+    "http://127.0.0.1:5640/api/1/me/api_tokens/",
+    "http://127.0.0.1:5640/api/1/me/api_tokens/",
+    "http://127.0.0.1:5640/oauth/token",
+    "http://127.0.0.1:5640/api/1/site/",
+    "http://127.0.0.1:5640/oauth/revoke",
+    "http://127.0.0.1:5640/oauth/error",
+    "http://127.0.0.1:5640/oauth/authorize?client_id=wheel-client&response_type=code",
+    "http://127.0.0.1:5640/api/1/me/api_tokens/wheel-token-id/",
+    "http://127.0.0.1:5640/api/1/site/",
+    "http://127.0.0.1:5640/api/1/spatial/granularities/",
+    "http://127.0.0.1:5640/api/1/spatial/levels/",
+    "http://127.0.0.1:5640/api/1/spatial/zones/suggest/?q=fr&size=10",
+    "http://127.0.0.1:5640/api/1/spatial/zone/wheel-zone/",
+    "http://127.0.0.1:5640/api/1/spatial/zone/wheel-zone/datasets/?size=25",
+    "http://127.0.0.1:5640/api/1/spatial/coverage/country%3Afr/",
+    "http://127.0.0.1:5640/api/2/topics/?page=1&page_size=20",
+    "http://127.0.0.1:5640/api/2/topics/wheel-topic/",
+    "http://127.0.0.1:5640/api/2/topics/search/?page=1&page_size=20",
+    "http://127.0.0.1:5640/api/2/topics/wheel-topic/elements/?page=1&page_size=20",
+    "http://127.0.0.1:5640/api/2/topics/",
+    "http://127.0.0.1:5640/api/2/topics/wheel-topic/",
+    "http://127.0.0.1:5640/api/2/topics/wheel-topic/elements/",
+    "http://127.0.0.1:5640/api/2/topics/wheel-topic/featured/",
+    "http://127.0.0.1:5640/api/2/topics/wheel-topic/featured/",
+    "http://127.0.0.1:5640/api/2/topics/wheel-topic/",
+    "http://127.0.0.1:5640/api/1/visualizations/?page=1&page_size=20",
+    "http://127.0.0.1:5640/api/1/visualizations/wheel-viz/",
+    "http://127.0.0.1:5640/api/1/contacts/roles/",
+    "http://127.0.0.1:5640/api/1/contacts/wheel-contact/",
+    "http://127.0.0.1:5640/api/1/visualizations/",
+    "http://127.0.0.1:5640/api/1/visualizations/wheel-viz/",
+    "http://127.0.0.1:5640/api/1/visualizations/wheel-viz/image/",
+    "http://127.0.0.1:5640/api/1/visualizations/wheel-viz/",
+    "http://127.0.0.1:5640/api/1/contacts/",
+    "http://127.0.0.1:5640/api/1/contacts/wheel-contact/",
+    "http://127.0.0.1:5640/api/1/contacts/wheel-contact/",
+    "http://127.0.0.1:5640/api/1/workers/jobs/schedulables/",
+    "http://127.0.0.1:5640/api/1/workers/tasks/wheel-task-run/",
+    "http://127.0.0.1:5640/api/1/workers/jobs/",
+    "http://127.0.0.1:5640/api/1/workers/jobs/wheel-job/",
+    "http://127.0.0.1:5640/api/1/workers/jobs/",
+    "http://127.0.0.1:5640/api/1/harvest/backends/",
+    "http://127.0.0.1:5640/api/1/harvest/sources/?page=1&page_size=20",
+    "http://127.0.0.1:5640/api/1/harvest/sources/",
+    "http://127.0.0.1:5640/api/1/transfer/",
+    "http://127.0.0.1:5640/api/1/transfer/wheel-transfer/",
+    "http://127.0.0.1:5640/api/1/transfer/?subject=wheel-dataset",
+    "http://127.0.0.1:5640/api/1/harvest/source/wheel-source/",
+    "http://127.0.0.1:5640/api/1/access_type/reason_categories/",
+    "http://127.0.0.1:5640/api/1/tags/suggest/?q=ta&size=10",
+    "http://127.0.0.1:5640/api/1/avatars/wheel-user/64/",
+    "http://127.0.0.1:5640/api/2/captchetat/",
+    "http://127.0.0.1:5640/api/1/datasets/badges/",
+    "http://127.0.0.1:5640/api/1/datasets/extensions/",
+    "http://127.0.0.1:5640/api/1/datasets/licenses/",
+    "http://127.0.0.1:5640/api/1/datasets/frequencies/",
+    "http://127.0.0.1:5640/api/1/datasets/suggest/formats/?q=cs&size=10",
+    "http://127.0.0.1:5640/api/1/datasets/schemas/",
+    "http://127.0.0.1:5640/api/2/datasets/abc/schemas/",
+    "http://127.0.0.1:5640/api/1/datasets/abc/badges/",
+    "http://127.0.0.1:5640/api/1/datasets/abc/badges/pivotal-data/",
+    "http://127.0.0.1:5640/api/1/activity/",
+    "http://127.0.0.1:5640/api/1/discussions/",
+    "http://127.0.0.1:5640/api/1/discussions/wheel-discussion/",
+    "http://127.0.0.1:5640/api/2/discussions/search/?page=1&page_size=20",
+    "http://127.0.0.1:5640/api/1/discussions/",
+    "http://127.0.0.1:5640/api/1/discussions/wheel-discussion/",
+    "http://127.0.0.1:5640/api/1/discussions/wheel-discussion/",
+    "http://127.0.0.1:5640/api/1/discussions/wheel-discussion/comments/0/",
+    "http://127.0.0.1:5640/api/1/discussions/wheel-discussion/",
+    "http://127.0.0.1:5640/api/1/discussions/wheel-discussion/comments/1/",
+    "http://127.0.0.1:5640/api/1/posts/?page=1&page_size=20&q=wheel",
+    "http://127.0.0.1:5640/api/1/posts/wheel-post/",
+    "http://127.0.0.1:5640/api/1/posts/recent.atom",
+    "http://127.0.0.1:5640/api/2/posts/search/?page=1&page_size=20&q=wheel",
+    "http://127.0.0.1:5640/api/1/reports/",
+    "http://127.0.0.1:5640/api/1/reports/wheel-report/",
+    "http://127.0.0.1:5640/api/1/reports/reasons/",
+    "http://127.0.0.1:5640/api/1/reports/wheel-report/",
+    "http://127.0.0.1:5640/api/1/notifications/wheel-notification/read/",
+    "http://127.0.0.1:5640/api/1/reuses/?page=1&page_size=20",
+    "http://127.0.0.1:5640/api/1/reuses/recent.atom?page=1&page_size=20",
+    "http://127.0.0.1:5640/api/1/reuses/suggest/?q=re&size=10",
+    "http://127.0.0.1:5640/api/1/reuses/badges/",
+    "http://127.0.0.1:5640/api/1/reuses/types/",
+    "http://127.0.0.1:5640/api/1/reuses/topics/",
+    "http://127.0.0.1:5640/api/1/reuses/wheel-reuse/",
+    "http://127.0.0.1:5640/api/2/reuses/?page=1&page_size=20",
+    "http://127.0.0.1:5640/api/2/reuses/search/?page=1&page_size=50",
+    "http://127.0.0.1:5640/api/1/reuses/",
+    "http://127.0.0.1:5640/api/1/reuses/wheel-reuse/datasets/",
+    "http://127.0.0.1:5640/api/1/reuses/wheel-reuse/",
+]
+
+
+_ASYNC_EXPECTED = [
+    "http://127.0.0.1:5640/api/1/access_type/reason_categories/",
+    "http://127.0.0.1:5640/api/1/activity/",
+    "http://127.0.0.1:5640/api/1/contacts/",
+    "http://127.0.0.1:5640/api/1/contacts/roles/",
+    "http://127.0.0.1:5640/api/1/contacts/wheel-contact/",
+    "http://127.0.0.1:5640/api/1/dataservices/wheel-dataservice/",
+    "http://127.0.0.1:5640/api/1/datasets/",
+    "http://127.0.0.1:5640/api/1/datasets/?page=1&page_size=20",
+    "http://127.0.0.1:5640/api/1/datasets/abc/badges/",
+    "http://127.0.0.1:5640/api/1/datasets/abc/badges/pivotal-data/",
+    "http://127.0.0.1:5640/api/1/datasets/abc/resources/",
+    "http://127.0.0.1:5640/api/1/datasets/badges/",
+    "http://127.0.0.1:5640/api/1/datasets/extensions/",
+    "http://127.0.0.1:5640/api/1/datasets/suggest/mime/?q=js&size=10",
+    "http://127.0.0.1:5640/api/1/discussions/",
+    "http://127.0.0.1:5640/api/1/discussions/wheel-discussion/",
+    "http://127.0.0.1:5640/api/1/discussions/wheel-discussion/",
+    "http://127.0.0.1:5640/api/1/harvest/backends/",
+    "http://127.0.0.1:5640/api/1/harvest/sources/?page=1&page_size=20",
+    "http://127.0.0.1:5640/api/1/me/",
+    "http://127.0.0.1:5640/api/1/me/api_tokens/",
+    "http://127.0.0.1:5640/api/1/me/api_tokens/",
+    "http://127.0.0.1:5640/api/1/me/api_tokens/wheel-token-id/",
+    "http://127.0.0.1:5640/api/1/notifications/?page=1&page_size=20",
+    "http://127.0.0.1:5640/api/1/organizations/",
+    "http://127.0.0.1:5640/api/1/organizations/abc/",
+    "http://127.0.0.1:5640/api/1/posts/?page=1&page_size=20",
+    "http://127.0.0.1:5640/api/1/reports/",
+    "http://127.0.0.1:5640/api/1/reuses/",
+    "http://127.0.0.1:5640/api/1/reuses/?page=1&page_size=20",
+    "http://127.0.0.1:5640/api/1/reuses/wheel-reuse/",
+    "http://127.0.0.1:5640/api/1/reuses/wheel-reuse/",
+    "http://127.0.0.1:5640/api/1/site/",
+    "http://127.0.0.1:5640/api/1/site/",
+    "http://127.0.0.1:5640/api/1/site/datasets.csv",
+    "http://127.0.0.1:5640/api/1/spatial/coverage/country%3Afr/",
+    "http://127.0.0.1:5640/api/1/spatial/granularities/",
+    "http://127.0.0.1:5640/api/1/spatial/levels/",
+    "http://127.0.0.1:5640/api/1/spatial/zone/wheel-zone/",
+    "http://127.0.0.1:5640/api/1/spatial/zone/wheel-zone/datasets/?size=25",
+    "http://127.0.0.1:5640/api/1/spatial/zones/suggest/?q=fr&size=10",
+    "http://127.0.0.1:5640/api/1/transfer/wheel-transfer/",
+    "http://127.0.0.1:5640/api/1/visualizations/",
+    "http://127.0.0.1:5640/api/1/visualizations/?page=1&page_size=20",
+    "http://127.0.0.1:5640/api/1/visualizations/wheel-viz/",
+    "http://127.0.0.1:5640/api/1/visualizations/wheel-viz/",
+    "http://127.0.0.1:5640/api/1/visualizations/wheel-viz/image/",
+    "http://127.0.0.1:5640/api/1/workers/jobs/",
+    "http://127.0.0.1:5640/api/1/workers/jobs/schedulables/",
+    "http://127.0.0.1:5640/api/1/workers/tasks/wheel-task-run/",
+    "http://127.0.0.1:5640/api/2/captchetat/",
+    "http://127.0.0.1:5640/api/2/discussions/search/?page=1&page_size=20",
+    "http://127.0.0.1:5640/api/2/topics/",
+    "http://127.0.0.1:5640/api/2/topics/?page=1&page_size=20",
+    "http://127.0.0.1:5640/api/2/topics/search/?page=1&page_size=20",
+    "http://127.0.0.1:5640/api/2/topics/wheel-topic/",
+    "http://127.0.0.1:5640/api/2/topics/wheel-topic/",
+    "http://127.0.0.1:5640/api/2/topics/wheel-topic/elements/?page=1&page_size=20",
+    "http://127.0.0.1:5640/api/2/topics/wheel-topic/elements/wheel-element/",
+    "http://127.0.0.1:5640/api/2/topics/wheel-topic/elements/wheel-element/",
+]
+
+
 class Transport:
-    def __init__(self, version="17.6.0"):
+    def __init__(self, version="17.16.0"):
         self.requests = []
         self.close_count = 0
         self.version = version
@@ -587,6 +769,8 @@ class Transport:
     def send(self, request):
         url = request.url
         self.requests.append(url)
+        if url.endswith("/swagger.json"):
+            assert not request.headers
         body, headers = self._route(request)
         status = 204 if request.method == "DELETE" else 201 if request.method == "POST" else 200
         if url.partition("?")[0].endswith("/api/2/topics/wheel-topic/featured/"):
@@ -625,7 +809,7 @@ def main() -> None:
     client = create_sync_client(
         UDataClientSettings(base_url="http://127.0.0.1:5640", sync_transport=transport, credential=sync_credential)
     )
-    assert client.site_version().version == "17.6.0"
+    assert client.site_version().version == "17.16.0"
     assert client.dataservices.get_dataservice("wheel-dataservice").payload["id"] == "wheel-dataservice"
     root_profile = client.root_profile.get()
     assert root_profile.id == "s"
@@ -1627,177 +1811,11 @@ def main() -> None:
     assert organization_created.receipt.operation == "udata/api-v1.create-organization"
     assert organization_created.receipt.outcome == "succeeded"
     assert organization_created.receipt.audit_metadata["status_code"] == 201
-    recorded = [getattr(r, "url", r) for r in transport.requests]
-    expected = [
-        "http://127.0.0.1:5640/api/1/site/",
-        "http://127.0.0.1:5640/api/1/dataservices/wheel-dataservice/",
-        "http://127.0.0.1:5640/api/1/site/",
-        "http://127.0.0.1:5640/api/1/site/datasets.csv",
-        "http://127.0.0.1:5640/api/1/datasets/",
-        "http://127.0.0.1:5640/api/1/datasets/?page=1&page_size=20",
-        "http://127.0.0.1:5640/api/1/organizations/abc/",
-        "http://127.0.0.1:5640/api/1/datasets/abc/resources/",
-        "http://127.0.0.1:5640/api/1/datasets/abc/upload/",
-        "http://127.0.0.1:5640/api/1/organizations/",
-        "http://127.0.0.1:5640/api/1/me/",
-        "http://127.0.0.1:5640/api/1/me/api_tokens/",
-        "http://127.0.0.1:5640/api/1/me/api_tokens/",
-        "http://127.0.0.1:5640/oauth/token",
-        "http://127.0.0.1:5640/api/1/site/",
-        "http://127.0.0.1:5640/oauth/revoke",
-        "http://127.0.0.1:5640/oauth/error",
-        "http://127.0.0.1:5640/oauth/authorize?client_id=wheel-client&response_type=code",
-        "http://127.0.0.1:5640/api/1/me/api_tokens/wheel-token-id/",
-        "http://127.0.0.1:5640/api/1/site/",
-        "http://127.0.0.1:5640/api/1/spatial/granularities/",
-        "http://127.0.0.1:5640/api/1/spatial/levels/",
-        "http://127.0.0.1:5640/api/1/spatial/zones/suggest/?q=fr&size=10",
-        "http://127.0.0.1:5640/api/1/spatial/zone/wheel-zone/",
-        "http://127.0.0.1:5640/api/1/spatial/zone/wheel-zone/datasets/?size=25",
-        "http://127.0.0.1:5640/api/1/spatial/coverage/country%3Afr/",
-        "http://127.0.0.1:5640/api/2/topics/?page=1&page_size=20",
-        "http://127.0.0.1:5640/api/2/topics/wheel-topic/",
-        "http://127.0.0.1:5640/api/2/topics/search/?page=1&page_size=20",
-        "http://127.0.0.1:5640/api/2/topics/wheel-topic/elements/?page=1&page_size=20",
-        "http://127.0.0.1:5640/api/2/topics/",
-        "http://127.0.0.1:5640/api/2/topics/wheel-topic/",
-        "http://127.0.0.1:5640/api/2/topics/wheel-topic/elements/",
-        "http://127.0.0.1:5640/api/2/topics/wheel-topic/featured/",
-        "http://127.0.0.1:5640/api/2/topics/wheel-topic/featured/",
-        "http://127.0.0.1:5640/api/2/topics/wheel-topic/",
-        "http://127.0.0.1:5640/api/1/visualizations/?page=1&page_size=20",
-        "http://127.0.0.1:5640/api/1/visualizations/wheel-viz/",
-        "http://127.0.0.1:5640/api/1/contacts/roles/",
-        "http://127.0.0.1:5640/api/1/contacts/wheel-contact/",
-        "http://127.0.0.1:5640/api/1/visualizations/",
-        "http://127.0.0.1:5640/api/1/visualizations/wheel-viz/",
-        "http://127.0.0.1:5640/api/1/visualizations/wheel-viz/image/",
-        "http://127.0.0.1:5640/api/1/visualizations/wheel-viz/",
-        "http://127.0.0.1:5640/api/1/contacts/",
-        "http://127.0.0.1:5640/api/1/contacts/wheel-contact/",
-        "http://127.0.0.1:5640/api/1/contacts/wheel-contact/",
-        "http://127.0.0.1:5640/api/1/workers/jobs/schedulables/",
-        "http://127.0.0.1:5640/api/1/workers/tasks/wheel-task-run/",
-        "http://127.0.0.1:5640/api/1/workers/jobs/",
-        "http://127.0.0.1:5640/api/1/workers/jobs/wheel-job/",
-        "http://127.0.0.1:5640/api/1/workers/jobs/",
-        "http://127.0.0.1:5640/api/1/harvest/backends/",
-        "http://127.0.0.1:5640/api/1/harvest/sources/?page=1&page_size=20",
-        "http://127.0.0.1:5640/api/1/harvest/sources/",
-        "http://127.0.0.1:5640/api/1/transfer/",
-        "http://127.0.0.1:5640/api/1/transfer/wheel-transfer/",
-        "http://127.0.0.1:5640/api/1/transfer/?subject=wheel-dataset",
-        "http://127.0.0.1:5640/api/1/harvest/source/wheel-source/",
-        "http://127.0.0.1:5640/api/1/access_type/reason_categories/",
-        "http://127.0.0.1:5640/api/1/tags/suggest/?q=ta&size=10",
-        "http://127.0.0.1:5640/api/1/avatars/wheel-user/64/",
-        "http://127.0.0.1:5640/api/2/captchetat/",
-        "http://127.0.0.1:5640/api/1/datasets/badges/",
-        "http://127.0.0.1:5640/api/1/datasets/extensions/",
-        "http://127.0.0.1:5640/api/1/datasets/licenses/",
-        "http://127.0.0.1:5640/api/1/datasets/frequencies/",
-        "http://127.0.0.1:5640/api/1/datasets/suggest/formats/?q=cs&size=10",
-        "http://127.0.0.1:5640/api/1/datasets/schemas/",
-        "http://127.0.0.1:5640/api/2/datasets/abc/schemas/",
-        "http://127.0.0.1:5640/api/1/datasets/abc/badges/",
-        "http://127.0.0.1:5640/api/1/datasets/abc/badges/pivotal-data/",
-        "http://127.0.0.1:5640/api/1/activity/",
-        "http://127.0.0.1:5640/api/1/discussions/",
-        "http://127.0.0.1:5640/api/1/discussions/wheel-discussion/",
-        "http://127.0.0.1:5640/api/2/discussions/search/?page=1&page_size=20",
-        "http://127.0.0.1:5640/api/1/discussions/",
-        "http://127.0.0.1:5640/api/1/discussions/wheel-discussion/",
-        "http://127.0.0.1:5640/api/1/discussions/wheel-discussion/",
-        "http://127.0.0.1:5640/api/1/discussions/wheel-discussion/comments/0/",
-        "http://127.0.0.1:5640/api/1/discussions/wheel-discussion/",
-        "http://127.0.0.1:5640/api/1/discussions/wheel-discussion/comments/1/",
-        "http://127.0.0.1:5640/api/1/posts/?page=1&page_size=20&q=wheel",
-        "http://127.0.0.1:5640/api/1/posts/wheel-post/",
-        "http://127.0.0.1:5640/api/1/posts/recent.atom",
-        "http://127.0.0.1:5640/api/2/posts/search/?page=1&page_size=20&q=wheel",
-        "http://127.0.0.1:5640/api/1/reports/",
-        "http://127.0.0.1:5640/api/1/reports/wheel-report/",
-        "http://127.0.0.1:5640/api/1/reports/reasons/",
-        "http://127.0.0.1:5640/api/1/reports/wheel-report/",
-        "http://127.0.0.1:5640/api/1/notifications/wheel-notification/read/",
-        "http://127.0.0.1:5640/api/1/reuses/?page=1&page_size=20",
-        "http://127.0.0.1:5640/api/1/reuses/recent.atom?page=1&page_size=20",
-        "http://127.0.0.1:5640/api/1/reuses/suggest/?q=re&size=10",
-        "http://127.0.0.1:5640/api/1/reuses/badges/",
-        "http://127.0.0.1:5640/api/1/reuses/types/",
-        "http://127.0.0.1:5640/api/1/reuses/topics/",
-        "http://127.0.0.1:5640/api/1/reuses/wheel-reuse/",
-        "http://127.0.0.1:5640/api/2/reuses/?page=1&page_size=20",
-        "http://127.0.0.1:5640/api/2/reuses/search/?page=1&page_size=50",
-        "http://127.0.0.1:5640/api/1/reuses/",
-        "http://127.0.0.1:5640/api/1/reuses/wheel-reuse/datasets/",
-        "http://127.0.0.1:5640/api/1/reuses/wheel-reuse/",
-    ]
+    recorded = [getattr(r, "url", r) for r in transport.requests if not str(r).endswith("/swagger.json")]
+    expected = _EXPECTED
     assert recorded == expected
-    async_recorded = [getattr(r, "url", r) for r in async_transport.requests]
-    async_expected = [
-        # one entry per dispatch, duplicates preserved (/api/1/me/api_tokens/ is listed then created)
-        "http://127.0.0.1:5640/api/1/access_type/reason_categories/",
-        "http://127.0.0.1:5640/api/1/activity/",
-        "http://127.0.0.1:5640/api/1/contacts/",
-        "http://127.0.0.1:5640/api/1/contacts/roles/",
-        "http://127.0.0.1:5640/api/1/contacts/wheel-contact/",
-        "http://127.0.0.1:5640/api/1/dataservices/wheel-dataservice/",
-        "http://127.0.0.1:5640/api/1/datasets/",
-        "http://127.0.0.1:5640/api/1/datasets/?page=1&page_size=20",
-        "http://127.0.0.1:5640/api/1/datasets/abc/badges/",
-        "http://127.0.0.1:5640/api/1/datasets/abc/badges/pivotal-data/",
-        "http://127.0.0.1:5640/api/1/datasets/abc/resources/",
-        "http://127.0.0.1:5640/api/1/datasets/badges/",
-        "http://127.0.0.1:5640/api/1/datasets/extensions/",
-        "http://127.0.0.1:5640/api/1/datasets/suggest/mime/?q=js&size=10",
-        "http://127.0.0.1:5640/api/1/discussions/",
-        "http://127.0.0.1:5640/api/1/discussions/wheel-discussion/",
-        "http://127.0.0.1:5640/api/1/discussions/wheel-discussion/",
-        "http://127.0.0.1:5640/api/1/harvest/backends/",
-        "http://127.0.0.1:5640/api/1/harvest/sources/?page=1&page_size=20",
-        "http://127.0.0.1:5640/api/1/me/",
-        "http://127.0.0.1:5640/api/1/me/api_tokens/",
-        "http://127.0.0.1:5640/api/1/me/api_tokens/",
-        "http://127.0.0.1:5640/api/1/me/api_tokens/wheel-token-id/",
-        "http://127.0.0.1:5640/api/1/notifications/?page=1&page_size=20",
-        "http://127.0.0.1:5640/api/1/organizations/",
-        "http://127.0.0.1:5640/api/1/organizations/abc/",
-        "http://127.0.0.1:5640/api/1/posts/?page=1&page_size=20",
-        "http://127.0.0.1:5640/api/1/reports/",
-        "http://127.0.0.1:5640/api/1/reuses/",
-        "http://127.0.0.1:5640/api/1/reuses/?page=1&page_size=20",
-        "http://127.0.0.1:5640/api/1/reuses/wheel-reuse/",
-        "http://127.0.0.1:5640/api/1/reuses/wheel-reuse/",
-        "http://127.0.0.1:5640/api/1/site/",
-        "http://127.0.0.1:5640/api/1/site/",
-        "http://127.0.0.1:5640/api/1/site/datasets.csv",
-        "http://127.0.0.1:5640/api/1/spatial/coverage/country%3Afr/",
-        "http://127.0.0.1:5640/api/1/spatial/granularities/",
-        "http://127.0.0.1:5640/api/1/spatial/levels/",
-        "http://127.0.0.1:5640/api/1/spatial/zone/wheel-zone/",
-        "http://127.0.0.1:5640/api/1/spatial/zone/wheel-zone/datasets/?size=25",
-        "http://127.0.0.1:5640/api/1/spatial/zones/suggest/?q=fr&size=10",
-        "http://127.0.0.1:5640/api/1/transfer/wheel-transfer/",
-        "http://127.0.0.1:5640/api/1/visualizations/",
-        "http://127.0.0.1:5640/api/1/visualizations/?page=1&page_size=20",
-        "http://127.0.0.1:5640/api/1/visualizations/wheel-viz/",
-        "http://127.0.0.1:5640/api/1/visualizations/wheel-viz/",
-        "http://127.0.0.1:5640/api/1/visualizations/wheel-viz/image/",
-        "http://127.0.0.1:5640/api/1/workers/jobs/",
-        "http://127.0.0.1:5640/api/1/workers/jobs/schedulables/",
-        "http://127.0.0.1:5640/api/1/workers/tasks/wheel-task-run/",
-        "http://127.0.0.1:5640/api/2/captchetat/",
-        "http://127.0.0.1:5640/api/2/discussions/search/?page=1&page_size=20",
-        "http://127.0.0.1:5640/api/2/topics/",
-        "http://127.0.0.1:5640/api/2/topics/?page=1&page_size=20",
-        "http://127.0.0.1:5640/api/2/topics/search/?page=1&page_size=20",
-        "http://127.0.0.1:5640/api/2/topics/wheel-topic/",
-        "http://127.0.0.1:5640/api/2/topics/wheel-topic/",
-        "http://127.0.0.1:5640/api/2/topics/wheel-topic/elements/?page=1&page_size=20",
-        "http://127.0.0.1:5640/api/2/topics/wheel-topic/elements/wheel-element/",
-        "http://127.0.0.1:5640/api/2/topics/wheel-topic/elements/wheel-element/",
-    ]
+    async_recorded = [getattr(r, "url", r) for r in async_transport.requests if not str(r).endswith("/swagger.json")]
+    async_expected = _ASYNC_EXPECTED
     assert sorted(async_recorded) == sorted(async_expected)
     assert transport.close_count == 0
     assert async_transport.close_count == 0
@@ -1821,7 +1839,7 @@ def main() -> None:
         raise AssertionError("malformed installed-wheel response was accepted")
     malformed.close()
 
-    blocked_transport = Transport(version="17.7")
+    blocked_transport = Transport(version="18.0.0")
     blocked = create_sync_client(
         UDataClientSettings(base_url="http://127.0.0.1:5640", sync_transport=blocked_transport)
     )

@@ -46,10 +46,6 @@ class ReviewGateError(ValueError):
     """Raised when review provenance is incomplete, unsafe, or stale."""
 
 
-def _contains_sensitive(content: str) -> bool:
-    return any(pattern.search(content) for pattern in SENSITIVE)
-
-
 def digest_file(path: Path) -> str:
     """Return a file's SHA-256 digest."""
     return hashlib.sha256(path.read_bytes()).hexdigest()
@@ -71,15 +67,16 @@ def _private_origin(content: str) -> bool:
         if host is None:
             continue
         host = unquote(host).lower().rstrip(".")
-        if host in PRIVATE_HOSTS or host.endswith(PRIVATE_HOST_SUFFIXES) or "." not in host and ":" not in host:
+        if (
+            host in PRIVATE_HOSTS
+            or host.endswith(PRIVATE_HOST_SUFFIXES)
+            or not any(part in host for part in (".", ":"))
+        ):
             return True
         try:
-            address = ipaddress.ip_address(host)
-        except ValueError:
-            try:
-                address = ipaddress.ip_address(socket.inet_aton(host))
-            except OSError:
-                continue
+            address = ipaddress.ip_address(host if ":" in host else socket.inet_aton(host))
+        except (ValueError, OSError):
+            continue
         if not address.is_global or address.is_multicast:
             return True
     return False
@@ -98,6 +95,7 @@ def _safe_artifact(path: Path) -> None:
 def validate_artifact_content(content: str, name: str, *, reject_payload_keys: bool = True) -> None:
     """Reject secrets, raw payloads, and private origins in retained text."""
     values = [content]
+    sensitive_patterns = (*SENSITIVE, REDACTION_VIOLATION) if reject_payload_keys else SENSITIVE
     try:
         document = json.loads(content)
     except ValueError:
@@ -114,7 +112,7 @@ def validate_artifact_content(content: str, name: str, *, reject_payload_keys: b
             elif isinstance(value, str):
                 values.append(value)
     for value in values:
-        if _contains_sensitive(value) or reject_payload_keys and REDACTION_VIOLATION.search(value):
+        if any(pattern.search(value) for pattern in sensitive_patterns):
             raise ReviewGateError(f"review artifact contains sensitive content: {name}")
         if _private_origin(value):
             raise ReviewGateError(f"review artifact contains a private origin: {name}")
@@ -135,7 +133,26 @@ def _git_head(repo_root: Path) -> str:
     return head
 
 
-def _validate_threads(path: Path, reviewed_sha: str) -> None:
+def _validate_clean_review(attestation: object, source_review: Path, reviewer_id: str) -> None:
+    if not isinstance(attestation, dict):
+        raise ReviewGateError("clean review attestation must be an object")
+    for field in ("verdict", "reviewer_id", "source_review_sha256", "method", "limitations"):
+        value = attestation.get(field)
+        if not isinstance(value, str) or not value.strip():
+            raise ReviewGateError(f"clean review requires nonblank {field}")
+    for field in ("scope", "evidence"):
+        values = attestation.get(field)
+        if not isinstance(values, list) or not values or any(not isinstance(v, str) or not v.strip() for v in values):
+            raise ReviewGateError(f"clean review requires nonempty {field} references")
+    if attestation["verdict"] != "no_findings":
+        raise ReviewGateError("clean review verdict must be no_findings")
+    if attestation["reviewer_id"] != reviewer_id:
+        raise ReviewGateError("clean review reviewer does not match receipt identity")
+    if attestation["source_review_sha256"] != digest_file(source_review):
+        raise ReviewGateError("clean review report digest does not match source review")
+
+
+def _validate_threads(path: Path, reviewed_sha: str, source_review: Path, reviewer_id: str) -> None:
     _safe_artifact(path)
     try:
         document = json.loads(path.read_text(encoding="utf-8"))
@@ -148,6 +165,11 @@ def _validate_threads(path: Path, reviewed_sha: str) -> None:
     ):
         raise ReviewGateError("current thread export is not bound to the reviewed SHA")
     threads = document.get("threads")
+    if "clean_review" in document:
+        if threads != []:
+            raise ReviewGateError("clean review cannot contain findings")
+        _validate_clean_review(document["clean_review"], source_review, reviewer_id)
+        return
     if not isinstance(threads, list) or not threads:
         raise ReviewGateError("current thread export must contain classified findings")
     for thread in threads:
@@ -215,7 +237,7 @@ def capture_review(
         reviews_root, family, reviewed_sha, base_sha, reviewer_id, author_ids, parent_receipt, post_fix
     )
     _safe_artifact(source_review)
-    _validate_threads(current_threads, reviewed_sha)
+    _validate_threads(current_threads, reviewed_sha, source_review, reviewer_id)
     timestamp = created_at or datetime.now(UTC).isoformat().replace("+00:00", "Z")
     _validate_timestamp(timestamp)
     receipt = {
@@ -245,7 +267,7 @@ def capture_review(
         shutil.copyfile(source_review, source)
         shutil.copyfile(current_threads, threads)
         _safe_artifact(source)
-        _validate_threads(threads, reviewed_sha)
+        _validate_threads(threads, reviewed_sha, source, reviewer_id)
         if (
             digest_file(source) != receipt["source_review_sha256"]
             or digest_file(threads) != receipt["current_thread_sha256"]
@@ -303,7 +325,6 @@ def verify_review(reviews_root: Path, family: str, reviewed_sha: str) -> dict[st
     source = directory / _SOURCE_REVIEW
     threads = directory / _CURRENT_THREAD
     _safe_artifact(source)
-    _validate_threads(threads, reviewed_sha)
     try:
         receipt: Any = json.loads((directory / _REVIEW_RECEIPT).read_text(encoding="utf-8"))
     except ValueError as error:
@@ -314,6 +335,7 @@ def verify_review(reviews_root: Path, family: str, reviewed_sha: str) -> dict[st
         raise ReviewGateError("receipt reviewed SHA does not match directory")
     _validate_sha(str(receipt.get("base_sha", "")), "base_sha")
     _validate_review_identity(receipt)
+    _validate_threads(threads, reviewed_sha, source, receipt["reviewer_id"])
     if receipt.get("source_review_sha256") != digest_file(source) or receipt.get(
         "current_thread_sha256"
     ) != digest_file(threads):

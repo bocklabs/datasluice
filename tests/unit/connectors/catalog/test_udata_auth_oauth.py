@@ -26,7 +26,7 @@ from datasluice.connectors.catalog.udata.wire import oauth as wire
 from datasluice.domain.catalog.auth import EffectivePermissions, OAuthFlow, SecretValue, UDataCredential
 from datasluice.domain.catalog.ids import CatalogId, CatalogPlatform, ResourceKind
 from datasluice.domain.catalog.receipts import MutationReceipt
-from datasluice.errors.catalog import CatalogError, CatalogValidationError
+from datasluice.errors.catalog import CatalogError, CatalogValidationError, UnsupportedCapabilityError
 from datasluice.runtime.events import EventEmitter, ListSink
 from datasluice.runtime.transport.base import RedirectPolicy, RuntimeResponse
 from tests.helpers.udata_oauth_checks import assert_oauth_mutation_async, assert_oauth_mutation_sync
@@ -52,7 +52,7 @@ SITE = {"id": "site", "title": "uData", "version": "17.6.0"}
 CREDENTIAL = UDataCredential(api_key="unit-credential")
 PERMISSIONS = EffectivePermissions.for_credential(CREDENTIAL, platform=CatalogPlatform.UDATA)
 
-# The six stock /oauth route-methods from udata/api/oauth2.py at v17.6.0.
+
 ASSIGNED_ROUTES = (
     ("access_token", "POST", "/oauth/token"),
     ("revoke_token", "POST", "/oauth/revoke"),
@@ -235,7 +235,7 @@ def test_oauth_login_redirect_is_status_metadata_not_a_consent_document(
     assert result.to_dict() == {"session_gated": True, "status_code": status, "media_type": "application/json"}
 
 
-@pytest.mark.parametrize("status", [400, 401, 403, 404])
+@pytest.mark.parametrize("status", [400, 401, 403, 404, 405])
 @pytest.mark.parametrize("async_mode", [False, True])
 def test_oauth_read_error_keeps_http_status_instead_of_becoming_session_metadata(status: int, async_mode: bool) -> None:
     routes = declared_routes(
@@ -256,6 +256,8 @@ def test_oauth_read_error_keeps_http_status_instead_of_becoming_session_metadata
             client.auth_oauth.authorize(query, PERMISSIONS)
         error = raised.value
     assert error.metadata["status_code"] == status
+    if status in {404, 405}:
+        assert isinstance(error, UnsupportedCapabilityError)
 
 
 def test_oauth_authorize_get_sends_the_query_and_no_form_body() -> None:
@@ -279,8 +281,7 @@ def test_oauth_error_route_is_an_exact_public_html_read() -> None:
         outcome = client.auth_oauth.oauth_error()
     request = router.requests[-1]
     assert (request.method, request.url) == ("GET", f"{ORIGIN}/oauth/error")
-    # Stock serves this page as HTML, so the assertion exercises real semantics
-    # rather than echoing a router constant.
+
     assert outcome.to_dict() == {"session_gated": True, "status_code": 200, "media_type": "text/html"}
 
 
@@ -325,23 +326,20 @@ def test_form_bodies_keep_their_declared_media_type() -> None:
     assert router.requests[-1].headers["Content-Type"] == wire.FORM_MEDIA_TYPE
 
 
-def test_oauth_error_returns_the_stock_missing_template_status() -> None:
-    """The 17.6.0 image ships no api/oauth_error.html, so stock answers 500.
-
-    The typed surface exists to report that page, so the status must be returned rather than raised past the model.
-    """
-    router = html_sync_route_table(declared_routes(("GET", "/oauth/error", 500, None), site=SITE))
+@pytest.mark.parametrize("status", [404, 500])
+def test_oauth_error_returns_the_modelled_error_page_status(status: int) -> None:
+    router = html_sync_route_table(declared_routes(("GET", "/oauth/error", status, None), site=SITE))
     with sync_client(router, CREDENTIAL) as client:
         outcome = client.auth_oauth.oauth_error()
-    assert outcome.to_dict() == {"session_gated": True, "status_code": 500, "media_type": "text/html"}
+    assert outcome.to_dict() == {"session_gated": True, "status_code": status, "media_type": "text/html"}
 
     async def run() -> OAuthErrorDocument:
         async with async_client(
-            html_async_route_table(declared_routes(("GET", "/oauth/error", 500, None), site=SITE)), CREDENTIAL
+            html_async_route_table(declared_routes(("GET", "/oauth/error", status, None), site=SITE)), CREDENTIAL
         ) as client:
             return await client.auth_oauth.oauth_error()
 
-    assert asyncio.run(run()).status_code == 500
+    assert asyncio.run(run()).status_code == status
 
 
 def test_oauth_error_still_raises_on_a_status_outside_the_modelled_page() -> None:

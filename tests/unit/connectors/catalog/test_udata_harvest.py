@@ -45,6 +45,7 @@ from tests.helpers.udata_test_support import (
     UDATA_CREDENTIAL,
     UDATA_ORIGIN,
     UDATA_PERMISSIONS,
+    UDATA_SITE,
     AsyncRouteRouter,
     RouteTable,
     SyncRouteRouter,
@@ -220,9 +221,6 @@ def test_harvest_page_sizes_are_bounded_before_dispatch(page_size: object) -> No
     assert HarvestSourceQuery(page_size=100).query_params()[1] == ("page_size", "100")
 
 
-# --- T-04-ADM-01: server-side request forgery through the harvest endpoint -----------
-
-
 def _link_local_inputs(url: str) -> tuple[HarvestSourceInput | None, Exception | None]:
     try:
         return HarvestSourceInput(name="probe", url=url, backend="csv"), None
@@ -337,9 +335,6 @@ def test_harvest_writes_require_admin_evidence_and_a_confirmed_target() -> None:
         with pytest.raises(ForbiddenError):
             service.delete_source("source-1", PERMISSIONS, wrong_target_policy)
         assert _dispatches(router) == []
-
-
-# --- T-04-ADM-02: repudiation, per-item receipts, and exact targets ---------------------
 
 
 def test_every_harvest_mutation_returns_a_redacted_receipt_with_its_exact_target() -> None:
@@ -585,9 +580,6 @@ def test_bulk_run_budget_exhaustion_is_reported_not_hidden() -> None:
     assert [r.url for r in router.requests if "/harvest/source/" in r.url] == [_url("/api/1/harvest/source/source-1/")]
 
 
-# --- T-04-ADM-03: bounded job waits and abandonment ---------------------------------------
-
-
 def test_queued_harvest_work_returns_a_handle_and_a_bounded_wait() -> None:
     """Dispatching a run returns a typed handle; waiting is explicit and stops on terminal."""
     routes = with_site_route(
@@ -685,9 +677,6 @@ def test_waiting_without_a_queued_job_is_refused_before_any_dispatch() -> None:
     assert _dispatches(router) == []
 
 
-# --- reading, decoding, and dispatch parity ------------------------------------------------
-
-
 def test_harvest_reads_decode_into_bounded_records_in_both_modes() -> None:
     """Listings keep native pager presence; records stay frozen mapping envelopes."""
     page = {
@@ -772,11 +761,7 @@ def test_non_finite_harvest_responses_fail_typed_without_a_raw_body(literal: byt
     """NaN and the infinities are not JSON and never reach a native record."""
     routes: RouteTable = {
         ("GET", _url("/api/1/harvest/source/source-1/")): (200, b'{"id": "source-1", "title": ' + literal + b"}"),
-        ("GET", _url("/api/1/site/")): (
-            200,
-            b'{"version": "17.6.0", "id": "site", "title": "uData", '
-            b'"feed_size": 0, "keywords": [], "metrics": {"widgets": NaN}}',
-        ),
+        ("GET", _url("/api/1/site/")): (200, UDATA_SITE),
     }
     with (
         sync_client(sync_route_table(routes), UDATA_CREDENTIAL) as client,

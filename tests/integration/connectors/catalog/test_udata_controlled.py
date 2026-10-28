@@ -192,11 +192,7 @@ pytestmark = [
 ]
 
 
-_FAMILY_OPERATION_ID = next(
-    op_id
-    for op_id in declared_udata_profile().operations
-    if op_id.method == "dataset-list-search-show-create-update-delete"
-)
+_FAMILY_OPERATION_ID = next(op_id for op_id in declared_udata_profile().operations if op_id.method == "list-datasets")
 _ROOT_CONTRACT_RESOURCE = resources.files("datasluice.contracts").joinpath("catalog/fixtures/udata/root_profile.json")
 
 

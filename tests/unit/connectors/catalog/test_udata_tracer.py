@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+from typing import TYPE_CHECKING
 
+import httpx
 import pytest
 
 from datasluice.connectors.catalog.udata.clients import AsyncUDataClient, SyncUDataClient, declared_udata_profile
@@ -12,14 +14,15 @@ from datasluice.contracts.catalog.native.udata import AsyncUDataServices, SyncUD
 from datasluice.contracts.catalog.protocols import CatalogOperationGuard, CatalogOperationRequest
 from datasluice.domain.catalog.auth import UDataCredential
 from datasluice.domain.catalog.models import NativeRecord
-from datasluice.errors.catalog import CatalogValidationError
+from datasluice.domain.catalog.resilience import TimeBudget
+from datasluice.errors.catalog import BudgetExhaustedError, CatalogValidationError
 from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse
+from datasluice.runtime.transport.httpx_transport import AsyncHttpxCatalogTransport, HttpxCatalogTransport
 
-_DATASET_OPERATION_ID = next(
-    op_id
-    for op_id in declared_udata_profile().operations
-    if op_id.method == "dataset-list-search-show-create-update-delete"
-)
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator, Iterator
+
+_DATASET_OPERATION_ID = next(op_id for op_id in declared_udata_profile().operations if op_id.method == "list-datasets")
 
 
 def _datasets_operation() -> tuple[CatalogOperationRequest, CatalogOperationGuard]:
@@ -56,6 +59,12 @@ class RecordingTransport:
 
     def send(self, request: RuntimeRequest) -> RuntimeResponse:
         self.requests.append(request)
+        if request.url.endswith("/api/1/swagger.json"):
+            return RuntimeResponse(
+                200,
+                {},
+                json.dumps({"swagger": "2.0", "basePath": "/api/1", "paths": {"/datasets/": {"get": {}}}}).encode(),
+            )
         if request.url.endswith("/api/1/site/"):
             return RuntimeResponse(status_code=200, headers={}, body=_site_body(self._site_version))
         if self._responses:
@@ -74,6 +83,12 @@ class RecordingAsyncTransport:
 
     async def send(self, request: RuntimeRequest) -> RuntimeResponse:
         self.requests.append(request)
+        if request.url.endswith("/api/1/swagger.json"):
+            return RuntimeResponse(
+                200,
+                {},
+                json.dumps({"swagger": "2.0", "basePath": "/api/1", "paths": {"/datasets/": {"get": {}}}}).encode(),
+            )
         if request.url.endswith("/api/1/site/"):
             return RuntimeResponse(status_code=200, headers={}, body=_site_body(self._site_version))
         return RuntimeResponse(status_code=200, headers={}, body=_page_body())
@@ -87,7 +102,7 @@ def test_sync_tracer_performs_one_anonymous_probe_then_one_dataset_read() -> Non
     client = SyncUDataClient(
         transport,
         declared_udata_profile(),
-        origin="http://127.0.0.1:5640",
+        origin="https://example.test",
         owns_transport=False,
     )
     operation, guard = _datasets_operation()
@@ -95,8 +110,9 @@ def test_sync_tracer_performs_one_anonymous_probe_then_one_dataset_read() -> Non
     envelope = client.datasets_list(operation, guard)
 
     assert [r.url for r in transport.requests] == [
-        "http://127.0.0.1:5640/api/1/site/",
-        "http://127.0.0.1:5640/api/1/datasets/?page=1&page_size=20",
+        "https://example.test/api/1/site/",
+        "https://example.test/api/1/swagger.json",
+        "https://example.test/api/1/datasets/?page=1&page_size=20",
     ]
     assert all(not r.headers.get("X-API-KEY") for r in transport.requests)
     assert len(envelope.items) == 1
@@ -108,7 +124,7 @@ def test_sync_tracer_performs_one_anonymous_probe_then_one_dataset_read() -> Non
 
 
 def test_version_mismatch_blocks_dataset_dispatch_with_typed_remedy() -> None:
-    transport = RecordingTransport(site_version="17.5.9")
+    transport = RecordingTransport(site_version="18.0.0")
     client = SyncUDataClient(
         transport,
         declared_udata_profile(),
@@ -120,7 +136,7 @@ def test_version_mismatch_blocks_dataset_dispatch_with_typed_remedy() -> None:
     with pytest.raises(UDataVersionError) as excinfo:
         client.datasets_list(operation, guard)
 
-    assert excinfo.value.metadata["version_state"] == "malformed"
+    assert excinfo.value.metadata["version_state"] == "unsupported"
     assert len(transport.requests) == 1
     assert transport.requests[0].url.endswith("/api/1/site/")
 
@@ -140,7 +156,8 @@ def test_injected_credential_attaches_only_to_the_dataset_read() -> None:
     client.datasets_list(operation, guard)
 
     assert transport.requests[0].headers == {}
-    assert transport.requests[1].headers.get("X-API-KEY") == "secret-key"
+    assert transport.requests[1].headers == {}
+    assert transport.requests[2].headers.get("X-API-KEY") == "secret-key"
 
 
 def test_unknown_payload_parameters_are_rejected_before_dispatch() -> None:
@@ -194,7 +211,7 @@ def test_async_tracer_probes_anonymously_reads_once_and_owns_closure() -> None:
     client = AsyncUDataClient(
         owned,
         declared_udata_profile(),
-        origin="http://127.0.0.1:5640",
+        origin="https://example.test",
         credentials=credential,
         owns_transport=True,
     )
@@ -212,7 +229,8 @@ def test_async_tracer_probes_anonymously_reads_once_and_owns_closure() -> None:
     asyncio.run(run())
 
     assert owned.requests[0].headers == {}
-    assert owned.requests[1].headers.get("X-API-KEY") == "secret-key"
+    assert owned.requests[1].headers == {}
+    assert owned.requests[2].headers.get("X-API-KEY") == "secret-key"
     assert owned.aclose_count == 1
 
 
@@ -235,6 +253,111 @@ def test_live_clients_expose_every_declared_native_protocol_member() -> None:
     assert isinstance(async_client, AsyncUDataServices)
     assert isinstance(sync_client.extensions, SyncExtensionsService)
     assert isinstance(async_client.extensions, AsyncExtensionsService)
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.parametrize("authenticated", [False, True])
+def test_dataset_body_read_enforces_total_deadline(asynchronous: bool, authenticated: bool) -> None:
+    now = [0.0]
+    closed = []
+    credential = UDataCredential(api_key="secret-key") if authenticated else None
+
+    class Stream(httpx.SyncByteStream):
+        def __iter__(self) -> Iterator[bytes]:
+            now[0] = 2.0
+            yield _page_body()
+
+        def close(self) -> None:
+            closed.append(True)
+
+    class AsyncStream(httpx.AsyncByteStream):
+        async def __aiter__(self) -> AsyncIterator[bytes]:
+            now[0] = 2.0
+            yield _page_body()
+
+        async def aclose(self) -> None:
+            closed.append(True)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("site/"):
+            return httpx.Response(200, content=_site_body())
+        if request.url.path.endswith("swagger.json"):
+            return httpx.Response(
+                200, json={"swagger": "2.0", "basePath": "/api/1", "paths": {"/datasets/": {"get": {}}}}
+            )
+        assert bool(request.headers.get("X-API-KEY")) == authenticated
+        return httpx.Response(200, stream=AsyncStream() if asynchronous else Stream())
+
+    if asynchronous:
+
+        async def run() -> None:
+            async with AsyncUDataClient(
+                AsyncHttpxCatalogTransport(transport=httpx.MockTransport(handler)),
+                declared_udata_profile(),
+                origin="http://127.0.0.1:5640",
+                credentials=credential,
+                budget=TimeBudget(1, 1, 1, 1),
+                clock=lambda: now[0],
+            ) as client:
+                with pytest.raises(BudgetExhaustedError):
+                    await client.datasets_list(*_datasets_operation())
+
+        asyncio.run(run())
+    else:
+        with (
+            SyncUDataClient(
+                HttpxCatalogTransport(transport=httpx.MockTransport(handler)),
+                declared_udata_profile(),
+                origin="http://127.0.0.1:5640",
+                credentials=credential,
+                budget=TimeBudget(1, 1, 1, 1),
+                clock=lambda: now[0],
+            ) as client,
+            pytest.raises(BudgetExhaustedError),
+        ):
+            client.datasets_list(*_datasets_operation())
+    assert now[0] == 2.0
+    assert closed == [True]
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+def test_dataset_read_rejects_late_custom_transport_success(asynchronous: bool) -> None:
+    now = [0.0]
+
+    class LateTransport(RecordingTransport):
+        def send(self, request: RuntimeRequest) -> RuntimeResponse:
+            response = super().send(request)
+            if "/datasets/?" in request.url:
+                now[0] = 2.0
+            return response
+
+    transport = LateTransport()
+
+    class AsyncTransport(RecordingAsyncTransport):
+        async def send(self, request: RuntimeRequest) -> RuntimeResponse:
+            return transport.send(request)
+
+    with pytest.raises(BudgetExhaustedError):
+        if asynchronous:
+            client = AsyncUDataClient(
+                AsyncTransport(),
+                declared_udata_profile(),
+                origin="https://example.test",
+                owns_transport=False,
+                budget=TimeBudget(1, 1, 1, 1),
+                clock=lambda: now[0],
+            )
+            asyncio.run(client.datasets_list(*_datasets_operation()))
+        else:
+            sync_client = SyncUDataClient(
+                transport,
+                declared_udata_profile(),
+                origin="https://example.test",
+                owns_transport=False,
+                budget=TimeBudget(1, 1, 1, 1),
+                clock=lambda: now[0],
+            )
+            sync_client.datasets_list(*_datasets_operation())
 
 
 @pytest.mark.parametrize("owns_transport", [False, True])

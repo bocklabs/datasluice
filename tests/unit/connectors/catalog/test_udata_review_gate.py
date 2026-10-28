@@ -45,11 +45,26 @@ def _capture(
     post_fix: bool = False,
     parent_receipt: str | None = None,
     source_content: str = "# Independent review\n\nNo unresolved findings.\n",
+    clean: bool = False,
 ) -> Path:
     source = tmp_path / "source-review-input.md"
     threads = tmp_path / "thread-input.json"
     source.write_text(source_content, encoding="utf-8")
-    threads.write_text(json.dumps(_threads(reviewed_sha=reviewed_sha)), encoding="utf-8")
+    document = _threads(reviewed_sha=reviewed_sha)
+    if clean:
+        document.update(
+            threads=[],
+            clean_review={
+                "verdict": "no_findings",
+                "reviewer_id": reviewer,
+                "source_review_sha256": review_gate.digest_file(source),
+                "scope": ["scripts/check_udata_review_gate.py"],
+                "evidence": ["tests/unit/connectors/catalog/test_udata_review_gate.py"],
+                "method": "Inspected the source and executed the focused tests.",
+                "limitations": "Temporary test data. No live checks occurred.",
+            },
+        )
+    threads.write_text(json.dumps(document), encoding="utf-8")
     return review_gate.capture_review(
         reviews_root=tmp_path / "reviews",
         family="tracer",
@@ -65,14 +80,77 @@ def _capture(
     )
 
 
-def test_capture_and_verify_accepts_complete_separate_reviewer_evidence(tmp_path: Path) -> None:
-    directory = _capture(tmp_path)
+@pytest.mark.parametrize("clean", [False, True])
+def test_capture_and_verify_accepts_complete_separate_reviewer_evidence(tmp_path: Path, clean: bool) -> None:
+    directory = _capture(tmp_path, clean=clean)
 
     result = review_gate.verify_review(tmp_path / "reviews", "tracer", HEAD)
 
     assert result["status"] == "passed"
     assert result["reviewed_sha"] == HEAD
     assert directory == tmp_path / "reviews" / "tracer" / HEAD
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("clean_review", None),
+        ("clean_review", []),
+        ("clean_review", {}),
+        ("verdict", "fixed"),
+        ("reviewer_id", "other-reviewer"),
+        ("reviewer_id", " "),
+        ("source_review_sha256", "0" * 64),
+        ("source_review_sha256", "A" * 64),
+        ("scope", []),
+        ("scope", [" "]),
+        ("scope", [None]),
+        ("evidence", "source.py"),
+        ("evidence", []),
+        ("evidence", [" "]),
+        ("method", " "),
+        ("limitations", None),
+        ("method", "raw_response: retained"),
+        ("reviewed_sha", BASE),
+        ("threads", _threads()["threads"]),
+        ("threads", _threads(classification="valid")["threads"]),
+    ]
+    + [(field, None) for field in ("verdict", "reviewer_id", "source_review_sha256", "scope", "evidence", "method")],
+)
+def test_clean_review_rejects_invalid_attestation_before_publication_and_on_verify(
+    tmp_path: Path, field: str, value: object
+) -> None:
+    directory = _capture(tmp_path, clean=True)
+    threads = directory / "current-thread.json"
+    document = json.loads(threads.read_text(encoding="utf-8"))
+    target = document if field in {"clean_review", "reviewed_sha", "threads"} else document["clean_review"]
+    if value is None:
+        del target[field]
+    else:
+        target[field] = value
+    threads.write_text(json.dumps(document), encoding="utf-8")
+    receipt_path = directory / "review-receipt.json"
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    receipt["current_thread_sha256"] = review_gate.digest_file(threads)
+    receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+
+    message = "clean review cannot contain findings" if field == "threads" else None
+    with pytest.raises(review_gate.ReviewGateError, match=message):
+        review_gate.verify_review(tmp_path / "reviews", "tracer", HEAD)
+    with pytest.raises(review_gate.ReviewGateError, match=message):
+        review_gate.capture_review(
+            reviews_root=tmp_path / "rejected",
+            family="tracer",
+            reviewed_sha=HEAD,
+            base_sha=BASE,
+            reviewer_id="reviewer-2",
+            author_ids=("author-1",),
+            source_review=directory / "source-review.md",
+            current_threads=threads,
+            parent_receipt=None,
+            post_fix=False,
+        )
+    assert not (tmp_path / "rejected" / "tracer" / HEAD).exists()
 
 
 def test_capture_refuses_existing_sha_directory(tmp_path: Path) -> None:
@@ -216,16 +294,19 @@ def test_capture_rejects_post_fix_parent_receipt_matching_no_recorded_receipt(tm
 
 def test_capture_and_verify_accepts_post_fix_review_with_recorded_parent(tmp_path: Path) -> None:
     parent = _capture(tmp_path)
+    original = {path.name: path.read_bytes() for path in parent.iterdir()}
     child_sha = "c" * 40
     _capture(
         tmp_path,
         reviewed_sha=child_sha,
         post_fix=True,
         parent_receipt=review_gate.digest_file(parent / "review-receipt.json"),
+        clean=True,
     )
 
     assert review_gate.verify_review(tmp_path / "reviews", "tracer", child_sha)["status"] == "passed"
     assert review_gate.verify_review(tmp_path / "reviews", "tracer", HEAD)["status"] == "passed"
+    assert {path.name: path.read_bytes() for path in parent.iterdir()} == original
 
 
 def test_verify_rejects_post_fix_review_without_parent_receipt(tmp_path: Path) -> None:

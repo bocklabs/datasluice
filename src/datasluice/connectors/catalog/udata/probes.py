@@ -1,13 +1,16 @@
-"""Strict anonymous uData version gate resolving the pinned 17.6 contract."""
-
 from __future__ import annotations
 
-import re
 import threading
 from dataclasses import dataclass
 from time import monotonic
 from typing import TYPE_CHECKING
 
+from datasluice.connectors.catalog.udata.compatibility import (
+    _VERSION,
+    UDataVersionPolicy,
+    strict_json,
+    udata_version_policy,
+)
 from datasluice.connectors.catalog.udata.settings import normalize_origin
 from datasluice.domain.catalog.auth import credential_scope
 from datasluice.errors.catalog import (
@@ -17,7 +20,7 @@ from datasluice.errors.catalog import (
     NativeCatalogError,
     map_catalog_error,
 )
-from datasluice.runtime.transport.base import CatalogTransport, RuntimeRequest, RuntimeResponse
+from datasluice.runtime.transport.base import CatalogTransport, RedirectPolicy, RuntimeRequest, RuntimeResponse
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -27,13 +30,13 @@ if TYPE_CHECKING:
 
 SITE_PATH = "/api/1/site/"
 SITE_OPERATION_ID = "udata/api-v1.root-and-effective-profile-probe"
-_VERSION_PATTERN = re.compile(r"\d+\.\d+\.\d+\Z")
+_VERSION_PATTERN = _VERSION
 _SITE_KEYS = frozenset({"feed_size", "id", "keywords", "metrics", "title", "version"})
 _SITE_PROBE_MAX_BYTES = 64 * 1024
 
 
 class UDataVersionError(CatalogUnavailableError):
-    """The deployment did not prove the exact pinned uData API version."""
+    """The deployment did not prove the supported uData API version."""
 
     def __init__(
         self,
@@ -69,13 +72,13 @@ class SiteVersion:
 
 
 def parse_site_version(payload: object) -> SiteVersion:
-    """Classify one site payload against the exact pinned version contract.
+    """Classify one site payload against the supported version contract.
 
     Args:
         payload: The decoded JSON body of ``GET /api/1/site/``.
 
     Returns:
-        The bounded site evidence when the payload proves the exact version.
+        The bounded site evidence when the payload identifies a supported version.
 
     Raises:
         UDataVersionError: When the version key is missing, malformed, or
@@ -119,26 +122,19 @@ def parse_site_version(payload: object) -> SiteVersion:
     )
 
 
-def require_exact_version(observed: SiteVersion, pinned_version: str) -> SiteVersion:
-    """Reject any observed version that is not the exact pinned release.
-
-    Raises:
-        UDataVersionError: When the observed version differs from the pin.
-    """
-    if observed.version != pinned_version:
+def require_supported_version(observed: SiteVersion, policy: UDataVersionPolicy | None = None) -> SiteVersion:
+    policy = policy or udata_version_policy()
+    if not policy.accepts(observed.version):
         raise UDataVersionError(
-            version_state="malformed",
-            message=f"The uData deployment reported {observed.version}, not the pinned {pinned_version}.",
-            safe_action=(
-                "Point the connector at a deployment running the exact pinned uData release; "
-                "version drift requires a reviewed capability profile change."
-            ),
+            version_state="unsupported",
+            message="The uData deployment version is outside the supported range.",
+            safe_action=f"Use a deployment in the supported uData range {policy.supported_range}.",
         )
     return observed
 
 
 class SiteVersionGate:
-    """Anonymous-first exact-version gate caching one evidence entry per caller identity.
+    """Anonymous-first version-range gate caching one evidence entry per caller identity.
 
     The gate never resolves or attaches caller credentials: the probe request
     carries no authorization headers even when a credential is injected, and
@@ -148,19 +144,20 @@ class SiteVersionGate:
     def __init__(
         self,
         *,
-        pinned_version: str,
+        policy: UDataVersionPolicy | None = None,
         origin: str,
         transport: CatalogTransport | None,
         ttl_seconds: float,
         clock: Callable[[], float] = monotonic,
     ) -> None:
         """Pin the gate to one origin, transport, and evidence TTL."""
-        self._pinned_version = pinned_version
+        self._policy = policy or udata_version_policy()
         self._origin = normalize_origin(origin)
         self._transport = transport
         self._ttl_seconds = ttl_seconds
         self._clock = clock
         self._lock = threading.Lock()
+        self._generation = 0
         self._cache: dict[str, tuple[SiteVersion, float]] = {}
 
     def require_current(self, credentials: object | None, *, deadline: DeadlineMonitor | None = None) -> SiteVersion:
@@ -171,7 +168,7 @@ class SiteVersionGate:
         idempotent anonymous read (single-flight is the evidence cache's contract).
 
         Raises:
-            UDataVersionError: When the deployment fails the exact-version gate.
+            UDataVersionError: When the deployment fails the version-range gate.
             NativeCatalogError: When the probe transport or JSON decode fails.
         """
         scope = credential_scope(credentials)
@@ -179,14 +176,17 @@ class SiteVersionGate:
             cached = self._cache.get(scope)
             if cached is not None and self._clock() - cached[1] <= self._ttl_seconds:
                 return cached[0]
+            generation = self._generation
         observed = self._probe(deadline)
         with self._lock:
-            self._cache[scope] = (observed, self._clock())
+            if generation == self._generation:
+                self._cache[scope] = (observed, self._clock())
         return observed
 
     def invalidate(self) -> None:
         """Discard all cached site-version evidence."""
         with self._lock:
+            self._generation += 1
             self._cache.clear()
 
     def _probe(self, deadline: DeadlineMonitor | None = None) -> SiteVersion:
@@ -208,6 +208,7 @@ class SiteVersionGate:
             method="GET",
             url=f"{self._origin}{SITE_PATH}",
             headers={},
+            redirect_policy=RedirectPolicy.NO_FOLLOW,
             body=None,
             max_response_bytes=_SITE_PROBE_MAX_BYTES,
             deadline=deadline,
@@ -243,12 +244,10 @@ class SiteVersionGate:
                 message=f"The uData site probe returned HTTP {response.status_code}.",
                 safe_action="Verify the deployment origin exposes the stock /api/1/site/ document.",
             )
-        import json
-
         invalid_payload = False
         try:
-            payload = json.loads(response.body)
-        except (TypeError, ValueError):
+            payload = strict_json(response.body) if len(response.body) <= _SITE_PROBE_MAX_BYTES else None
+        except (TypeError, ValueError, RecursionError):
             invalid_payload = True
             payload = None
         if invalid_payload:
@@ -257,7 +256,7 @@ class SiteVersionGate:
                 message="The uData site probe returned an invalid JSON result.",
                 safe_action="Verify the deployment serves the stock /api/1/site/ JSON document.",
             )
-        return require_exact_version(parse_site_version(payload), self._pinned_version)
+        return require_supported_version(parse_site_version(payload), self._policy)
 
 
 class AsyncSiteVersionGate(SiteVersionGate):
@@ -276,7 +275,7 @@ class AsyncSiteVersionGate(SiteVersionGate):
     def __init__(
         self,
         *,
-        pinned_version: str,
+        policy: UDataVersionPolicy | None = None,
         origin: str,
         transport: AsyncCatalogTransport,
         ttl_seconds: float,
@@ -284,7 +283,7 @@ class AsyncSiteVersionGate(SiteVersionGate):
     ) -> None:
         """Pin the async gate to one async transport."""
         super().__init__(
-            pinned_version=pinned_version,
+            policy=policy,
             origin=origin,
             transport=None,
             ttl_seconds=ttl_seconds,
@@ -301,9 +300,11 @@ class AsyncSiteVersionGate(SiteVersionGate):
             cached = self._cache.get(scope)
             if cached is not None and self._clock() - cached[1] <= self._ttl_seconds:
                 return cached[0]
+            generation = self._generation
         observed = await self._probe_async(deadline)
         with self._lock:
-            self._cache[scope] = (observed, self._clock())
+            if generation == self._generation:
+                self._cache[scope] = (observed, self._clock())
         return observed
 
     async def _probe_async(self, deadline: DeadlineMonitor | None = None) -> SiteVersion:

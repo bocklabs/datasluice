@@ -397,7 +397,7 @@ def test_invalid_taxonomy_values_fail_before_or_at_decode_without_raw_body() -> 
         sync_client(
             sync_route_table(
                 {
-                    ("GET", f"{ORIGIN}/api/1/site/"): (200, nan_site),
+                    ("GET", f"{ORIGIN}/api/1/site/"): (200, UDATA_SITE),
                     ("GET", f"{ORIGIN}/api/1/datasets/extensions/"): (200, nan_site),
                 }
             ),

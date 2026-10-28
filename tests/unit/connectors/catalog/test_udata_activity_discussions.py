@@ -29,6 +29,7 @@ from tests.helpers.udata_test_support import (
     UDATA_CREDENTIAL,
     UDATA_ORIGIN,
     UDATA_PERMISSIONS,
+    UDATA_SITE,
     RouteTable,
     async_client,
     async_route_table,
@@ -453,7 +454,7 @@ def test_non_finite_decoding_fails_typed_without_raw_body() -> None:
     )
     with sync_client(
         sync_route_table(
-            {("GET", f"{ORIGIN}/api/1/site/"): (200, nan_site), ("GET", f"{ORIGIN}/api/1/activity/"): (200, nan_site)}
+            {("GET", f"{ORIGIN}/api/1/site/"): (200, UDATA_SITE), ("GET", f"{ORIGIN}/api/1/activity/"): (200, nan_site)}
         ),
         None,
     ) as client:

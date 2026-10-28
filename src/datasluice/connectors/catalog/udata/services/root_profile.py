@@ -238,7 +238,7 @@ def _mutating(
     failure_receipt, completed = _site_mutation_shapers(
         policy, decode, target, evidence_digest, emit, dispatched=dispatched
     )
-    return _run_receipted_mutation(dispatch, failure_receipt, completed)
+    return _run_receipted_mutation(dispatch, failure_receipt, completed, errors=SETTLEMENT_ERRORS)
 
 
 async def _amutating(
@@ -254,11 +254,11 @@ async def _amutating(
     failure_receipt, completed = _site_mutation_shapers(
         policy, decode, target, evidence_digest, emit, dispatched=dispatched
     )
-    return await _run_receipted_mutation_async(dispatch, failure_receipt, completed)
+    return await _run_receipted_mutation_async(dispatch, failure_receipt, completed, errors=ASYNC_SETTLEMENT_ERRORS)
 
 
-def _decode_profile(payload: object) -> SiteProfile:
-    return wire.parse_site_profile(payload, operation=ROOT_OPERATION)
+def _decode_profile(payload: object, *, status_code: int = 200) -> SiteProfile:
+    return wire.parse_site_profile(payload, operation=ROOT_OPERATION, status_code=status_code)
 
 
 def _decode_patch(payload: object, response: object) -> SiteProfile | None:
@@ -269,7 +269,13 @@ def _decode_patch(payload: object, response: object) -> SiteProfile | None:
             status_code=cast("int", getattr(response, "status_code", 0)),
             expected_media_type=_JSON_MEDIA_TYPE,
         )
-    return None if payload is None else wire.parse_site_profile(payload, operation=SET_SITE_OPERATION)
+    return (
+        None
+        if payload is None
+        else wire.parse_site_profile(
+            payload, operation=SET_SITE_OPERATION, status_code=cast("int", getattr(response, "status_code", 0))
+        )
+    )
 
 
 def _parse_redirect(
@@ -560,7 +566,7 @@ class SyncRootProfileService:
                 status_code=status,
                 expected_media_type=_JSON_MEDIA_TYPE,
             )
-            return _decode_profile(payload)
+            return _decode_profile(payload, status_code=status)
 
         return _run_root(self._client, action)
 
@@ -796,7 +802,7 @@ class AsyncRootProfileService:
                 status_code=status,
                 expected_media_type=_JSON_MEDIA_TYPE,
             )
-            return _decode_profile(payload)
+            return _decode_profile(payload, status_code=status)
 
         return await _run_root_async(self._client, action)
 

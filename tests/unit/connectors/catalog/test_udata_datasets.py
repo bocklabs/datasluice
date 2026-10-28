@@ -39,6 +39,7 @@ from datasluice.errors.catalog import (
     UnauthenticatedError,
 )
 from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse, TransportError
+from tests.helpers.udata_test_support import swagger_response
 
 if TYPE_CHECKING:
     from datasluice.domain.catalog.operations import OperationId
@@ -116,6 +117,8 @@ class RouterTransport:
         self.aclose_count = 0
 
     def send(self, request: RuntimeRequest) -> RuntimeResponse:
+        if response := swagger_response(request, self._routes):
+            return response
         self.requests.append(request)
         key = (request.method, request.url)
         if key not in self._routes:
@@ -134,6 +137,8 @@ class RouterAsyncTransport:
         self.aclose_count = 0
 
     async def send(self, request: RuntimeRequest) -> RuntimeResponse:
+        if response := swagger_response(request, self._routes):
+            return response
         self.requests.append(request)
         return _respond(self._routes[(request.method, request.url)])
 
@@ -728,7 +733,7 @@ def test_cr03_destructive_calls_are_never_auto_retried() -> None:
                 return RuntimeResponse(status_code=500, headers={}, body=b"{}")
             return super().send(request)
 
-    transport = FlakyTransport(_site_first({}))
+    transport = FlakyTransport(_site_first({("DELETE", "http://127.0.0.1:5640/api/1/datasets/abc/"): None}))
     client = SyncUDataClient(
         transport,
         declared_udata_profile(),
@@ -919,7 +924,7 @@ def test_cr05_foreign_origin_probe_evidence_is_rejected() -> None:
         ).encode()
     }
     client = SyncUDataClient(
-        RouterTransport(routes),
+        RouterTransport({**routes, ("GET", "https://datasets.example.com/api/1/datasets/"): None}),
         declared_udata_profile(),
         origin="https://datasets.example.com",
         probe_runner=ForeignRunner(),
@@ -1127,7 +1132,7 @@ def test_cr02_transport_failure_keeps_an_ambiguous_receipt_on_the_original_error
                 raise TransportError("connection dropped after dispatch")
             return super().send(request)
 
-    transport = FailingTransport(_site_first({}))
+    transport = FailingTransport(_site_first({("POST", "http://127.0.0.1:5640/api/1/datasets/"): None}))
     client = SyncUDataClient(
         transport,
         declared_udata_profile(),
@@ -1280,6 +1285,150 @@ def test_wr06_malformed_documented_dataset_fields_fail_with_route_identity() -> 
     assert raised.value.operation == "udata/api-v1.get-dataset"
     with pytest.raises(CatalogValidationError):
         wire.parse_suggestions([{"id": "abc"}], operation="udata/api-v1.suggest-datasets")
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.parametrize("native", [False, True])
+@pytest.mark.parametrize("depth", [2000, 12000])
+def test_dataset_nested_json_returns_bounded_native_error(asynchronous: bool, native: bool, depth: int) -> None:
+    body = b'{"data":[{"id":"abc","extras":{"response-controlled-field":' + b"[" * depth
+    body += b"0" + b"]" * depth + b"}}]}"
+    url = "http://127.0.0.1:5640/api/1/datasets/" + ("?page=1&page_size=20" if native else "")
+    routes = _site_first({("GET", url): (206, body)})
+    operation_id = next(op for op in declared_udata_profile().operations if op.method == "list-datasets")
+    request = CatalogOperationRequest(operation_id=operation_id)
+    guard = CatalogOperationGuard(operation_id=operation_id)
+    with pytest.raises(NativeCatalogError) as raised:
+        if asynchronous:
+
+            async def run() -> None:
+                async with _async_client(routes) as client:
+                    if native:
+                        await client.datasets.list()
+                    else:
+                        await client.datasets_list(request, guard)
+
+            asyncio.run(run())
+        else:
+            with _sync_client(routes) as client:
+                if native:
+                    client.datasets.list()
+                else:
+                    client.datasets_list(request, guard)
+    assert raised.value.operation == str(operation_id)
+    assert raised.value.status_code == 206
+    assert "response-controlled-field" not in str(raised.value)
+    assert raised.value.__cause__ is None
+    assert raised.value.__context__ is None
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.parametrize("shape", ["extras", "facets", "followers"])
+def test_dataset_auxiliary_nested_json_returns_bounded_native_error(asynchronous: bool, shape: str) -> None:
+    nested = b"[" * 500 + b"0" + b"]" * 500
+    paths = {
+        "extras": "/api/2/datasets/abc/extras/",
+        "facets": "/api/2/datasets/search/?page=1&page_size=20",
+        "followers": "/api/1/datasets/abc/followers/?page=1&page_size=20",
+    }
+    bodies = {
+        "extras": b'{"response-controlled-field":' + nested + b"}",
+        "facets": b'{"data":[],"facets":{"response-controlled-field":' + nested + b"}}",
+        "followers": b'{"data":[],"response-controlled-field":' + nested + b"}",
+    }
+    operations = {"extras": "v2_get_extras", "facets": "v2_search", "followers": "list_followers"}
+    routes = _site_first({("GET", "http://127.0.0.1:5640" + paths[shape]): (206, bodies[shape])})
+    with pytest.raises(NativeCatalogError) as raised:
+        if asynchronous:
+
+            async def run() -> None:
+                async with _async_client(routes) as client:
+                    if shape == "extras":
+                        await client.datasets.get_extras_v2("abc")
+                    elif shape == "facets":
+                        await client.datasets.search_v2()
+                    else:
+                        await client.datasets.list_dataset_followers("abc")
+
+            asyncio.run(run())
+        else:
+            with _sync_client(routes) as client:
+                if shape == "extras":
+                    client.datasets.get_extras_v2("abc")
+                elif shape == "facets":
+                    client.datasets.search_v2()
+                else:
+                    client.datasets.list_dataset_followers("abc")
+    assert raised.value.operation == wire.DATASET_OPERATIONS[operations[shape]]
+    assert raised.value.status_code == 206
+    assert "response-controlled-field" not in str(raised.value)
+    assert raised.value.__cause__ is None
+    assert raised.value.__context__ is None
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.parametrize("native", [False, True])
+def test_dataset_validation_errors_exclude_arbitrary_response_keys(asynchronous: bool, native: bool) -> None:
+    marker = "response-secret-" + "x" * 100_000
+    body = _page_body([{**_dataset_doc(), marker: {"": 1}}])
+    url = "http://127.0.0.1:5640/api/1/datasets/" + ("?page=1&page_size=20" if native else "")
+    routes = _site_first({("GET", url): body})
+    operation_id = next(op for op in declared_udata_profile().operations if op.method == "list-datasets")
+    request = CatalogOperationRequest(operation_id=operation_id)
+    guard = CatalogOperationGuard(operation_id=operation_id)
+    with pytest.raises(CatalogValidationError) as raised:
+        if asynchronous:
+
+            async def run() -> None:
+                async with _async_client(routes) as client:
+                    if native:
+                        await client.datasets.list()
+                    else:
+                        await client.datasets_list(request, guard)
+
+            asyncio.run(run())
+        else:
+            with _sync_client(routes) as client:
+                if native:
+                    client.datasets.list()
+                else:
+                    client.datasets_list(request, guard)
+    assert "response-secret-" not in str(raised.value)
+    assert len(str(raised.value)) < 256
+    assert marker not in str(raised.value.metadata)
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.parametrize("field,value", [("created_at", "not-an-instant"), ("last_modified", "2026-99-99T25:61:61Z")])
+def test_dataset_malformed_timestamp_is_rejected(asynchronous: bool, field: str, value: str) -> None:
+    routes = _site_first({("GET", "http://127.0.0.1:5640/api/1/datasets/abc/"): {**_dataset_doc(), field: value}})
+    with pytest.raises(CatalogValidationError) as raised:
+        if asynchronous:
+
+            async def run() -> None:
+                async with _async_client(routes) as client:
+                    await client.datasets.get("abc")
+
+            asyncio.run(run())
+        else:
+            with _sync_client(routes) as client:
+                client.datasets.get("abc")
+    assert raised.value.operation == "udata/api-v1.get-dataset"
+    assert value not in str(raised.value)
+    assert raised.value.__cause__ is None
+    assert raised.value.__context__ is None
+
+
+@pytest.mark.parametrize(
+    "value", [None, "2026-10-25T10:11:12.123Z", "2026-10-25T10:11:12+02:00", "2026-10-25T10:11:12"]
+)
+def test_dataset_timestamp_validation_preserves_wire_values_and_presence(value: str | None) -> None:
+    payload = {**_dataset_doc(), "created_at": value, "last_modified": value}
+    record = wire.parse_dataset_detail(payload)
+    assert record.payload["created_at"] == value
+    assert record.payload["last_modified"] == value
+    assert "created_at" not in wire.parse_dataset_detail(_dataset_doc()).payload
+    assert "last_modified" not in wire.parse_dataset_detail(_dataset_doc()).payload
 
 
 def test_wr07_nested_extras_inputs_and_results_are_json_safe_and_immutable() -> None:
@@ -1503,7 +1652,7 @@ def test_dataset_extras_validation_still_fails_typed_before_redaction() -> None:
     with pytest.raises(CatalogValidationError) as raised:
         wire.parse_extras({"not-finite": float("nan")})
 
-    assert raised.value.operation == "udata/api-v1.dataset-list-search-show-create-update-delete"
+    assert raised.value.operation == "udata/api-v1.list-datasets"
     with pytest.raises(CatalogValidationError):
         wire.parse_extras(["not", "an", "object"])
 
@@ -1512,7 +1661,7 @@ def test_dataset_extras_reject_an_empty_top_level_key_instead_of_dropping_it() -
     with pytest.raises(CatalogValidationError) as raised:
         wire.parse_extras({"": 1})
 
-    assert raised.value.operation == "udata/api-v1.dataset-list-search-show-create-update-delete"
+    assert raised.value.operation == "udata/api-v1.list-datasets"
 
 
 def test_suggestion_records_redact_credential_shaped_fields() -> None:
