@@ -140,6 +140,61 @@ def test_resource_service_methods_have_sync_async_parity() -> None:
     assert public_methods(SyncResourcesService) == public_methods(AsyncResourcesService) == expected
 
 
+@pytest.mark.parametrize("async_mode", [False, True])
+@pytest.mark.parametrize(
+    ("route", "invalid"),
+    [("get", {"title": []}), ("list_community", {"filesize": "invalid"}), ("create", {"filesize": True})],
+)
+def test_resource_reads_and_creates_reject_malformed_documented_fields(
+    async_mode: bool, route: str, invalid: dict[str, object]
+) -> None:
+    origin = "http://127.0.0.1:5640"
+    payload = {"id": "resource", **invalid}
+    routes = _routes(
+        {
+            ("GET", f"{origin}/api/1/datasets/dataset/resources/resource/"): payload,
+            ("GET", f"{origin}/api/1/datasets/community_resources/"): {"data": [payload]},
+            ("POST", f"{origin}/api/1/datasets/dataset/resources/"): (201, payload),
+        }
+    )
+    client_input = ResourceCreateInput(title="Sample", url="https://example.org/data.csv", filetype="remote")
+    policy = _policy("dataset", operation=wire.CREATE_OPERATION)
+    if async_mode:
+
+        async def run() -> CatalogValidationError:
+            async with AsyncUDataClient(
+                _AsyncRouter(routes), declared_udata_profile(), origin=origin, credentials=_CREDENTIAL
+            ) as client:
+                with pytest.raises(CatalogValidationError) as raised:
+                    if route == "get":
+                        await client.resources.get("dataset", "resource")
+                    elif route == "list_community":
+                        await client.resources.list_community()
+                    else:
+                        await client.resources.create("dataset", client_input, _PERMISSIONS, policy)
+            return raised.value
+
+        error = asyncio.run(run())
+    else:
+        with (
+            SyncUDataClient(
+                _Router(routes), declared_udata_profile(), origin=origin, credentials=_CREDENTIAL
+            ) as client,
+            pytest.raises(CatalogValidationError) as raised,
+        ):
+            if route == "get":
+                client.resources.get("dataset", "resource")
+            elif route == "list_community":
+                client.resources.list_community()
+            else:
+                client.resources.create("dataset", client_input, _PERMISSIONS, policy)
+        error = raised.value
+    if route == "create":
+        receipt = error.__dict__["mutation_receipt"]
+        assert receipt.outcome == "ambiguous"
+        assert receipt.audit_metadata["status_code"] == 201
+
+
 def test_clients_expose_typed_native_resource_protocols() -> None:
     sync = SyncUDataClient(
         _Router(_routes({})),

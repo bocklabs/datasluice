@@ -185,6 +185,31 @@ def test_every_assigned_user_route_has_exact_verb_and_path(name: str, method: st
         assert request[3] is None
 
 
+@pytest.mark.parametrize("async_mode", [False, True])
+@pytest.mark.parametrize("suffix", ["datasets", "community_resources", "reuses", "discussions"])
+def test_my_organization_queries_encode_string_filters(async_mode: bool, suffix: str) -> None:
+    path = f"/api/1/me/org_{suffix}/?q=a+b%26c"
+    routes = _routes(("GET", path, 200, [{"id": "item"}]))
+    if async_mode:
+
+        async def run() -> None:
+            transport = _AsyncRouter(routes)
+            async with AsyncUDataClient(
+                transport, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL
+            ) as client:
+                records = await getattr(client.users_tokens, f"my_org_{suffix}")(PERMISSIONS, q="a b&c")
+            assert records[0].payload["id"] == "item"
+            assert transport.requests[-1].url == f"{ORIGIN}{path}"
+
+        asyncio.run(run())
+    else:
+        transport = _Router(routes)
+        with SyncUDataClient(transport, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL) as client:
+            records = getattr(client.users_tokens, f"my_org_{suffix}")(PERMISSIONS, q="a b&c")
+        assert records[0].payload["id"] == "item"
+        assert transport.requests[-1].url == f"{ORIGIN}{path}"
+
+
 def test_user_wire_preserves_query_omission_and_body_presence() -> None:
     assert wire.build_request("list_users", query=UserListQuery(q="a b", page=2, page_size=5))[1] == (
         "/api/1/users/?page=2&page_size=5&q=a+b"

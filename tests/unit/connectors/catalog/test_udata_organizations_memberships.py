@@ -289,6 +289,52 @@ def test_destructive_delete_requires_exact_confirmation_without_dispatch() -> No
             client.organizations_memberships.delete_organization("org-1", PERMISSIONS, policy)
 
 
+@pytest.mark.parametrize("async_mode", [False, True])
+def test_organization_extras_are_deeply_immutable(async_mode: bool) -> None:
+    routes = _routes({("GET", f"{ORIGIN}/api/2/organizations/org-1/extras/"): {"nested": [{"kept": 1}]}})
+    if async_mode:
+
+        async def run() -> Mapping[str, object]:
+            async with AsyncUDataClient(_AsyncRouter(routes), declared_udata_profile(), origin=ORIGIN) as client:
+                return await client.organizations_memberships.get_organization_extras("org-1")
+
+        extras = asyncio.run(run())
+    else:
+        with SyncUDataClient(_Router(routes), declared_udata_profile(), origin=ORIGIN) as client:
+            extras = client.organizations_memberships.get_organization_extras("org-1")
+    nested = extras["nested"]
+    assert isinstance(nested, tuple)
+    assert nested == ({"kept": 1},)
+    with pytest.raises(TypeError):
+        nested[0]["kept"] = 2
+
+
+@pytest.mark.parametrize("async_mode", [False, True])
+def test_organization_create_requires_a_returned_record(async_mode: bool) -> None:
+    routes = _routes({("POST", f"{ORIGIN}/api/1/organizations/"): (201, {})})
+    client_input = OrganizationCreateInput(name="Evidence", description="Org")
+    policy = _policy(wire.CREATE_ORGANIZATION_OPERATION, "Evidence")
+    with pytest.raises(CatalogValidationError) as raised:
+        if async_mode:
+
+            async def run() -> None:
+                async with AsyncUDataClient(
+                    _AsyncRouter(routes), declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL
+                ) as client:
+                    await client.organizations_memberships.create_organization(client_input, PERMISSIONS, policy)
+
+            asyncio.run(run())
+        else:
+            with SyncUDataClient(
+                _Router(routes), declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL
+            ) as client:
+                client.organizations_memberships.create_organization(client_input, PERMISSIONS, policy)
+    receipt = raised.value.__dict__["mutation_receipt"]
+    assert receipt.outcome == "ambiguous"
+    assert receipt.audit_metadata["status_code"] == 201
+    assert receipt.operation == wire.CREATE_ORGANIZATION_OPERATION
+
+
 def test_organization_inputs_reject_invalid_roles_and_ambiguous_invitations() -> None:
     with pytest.raises(ValueError):
         OrganizationMemberInput("owner")
