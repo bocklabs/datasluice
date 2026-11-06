@@ -7,6 +7,7 @@ from datasluice.domain.catalog.models import MappingRecord, NativeRecord, Result
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Mapping
 
+    from datasluice.connectors.catalog.udata.mapping import UDataPageEnvelope
     from datasluice.connectors.catalog.udata.models.activity_discussions import (
         ActivityQuery,
         CommentInput,
@@ -35,7 +36,18 @@ if TYPE_CHECKING:
         DataserviceSearchQuery,
         DataserviceUpdateInput,
     )
-    from datasluice.connectors.catalog.udata.models.datasets import DatasetFollowersQuery, DatasetMutationResult
+    from datasluice.connectors.catalog.udata.models.datasets import (
+        DatasetCreateInput,
+        DatasetDeleteOptions,
+        DatasetExtrasDelete,
+        DatasetExtrasUpdate,
+        DatasetFollowersQuery,
+        DatasetListQuery,
+        DatasetMutationResult,
+        DatasetSearchQuery,
+        DatasetSuggestQuery,
+        DatasetUpdateInput,
+    )
     from datasluice.connectors.catalog.udata.models.harvest import (
         HarvestBulkPreview,
         HarvestBulkResult,
@@ -2500,7 +2512,7 @@ class AsyncUDataService(Protocol):
 
 
 @runtime_checkable
-class SyncUDataDatasetsService(SyncUDataService, Protocol):
+class SyncUDataDatasetsService(Protocol):
     def list_dataset_followers(self, dataset_id: str, query: DatasetFollowersQuery | None = None) -> MappingRecord: ...
 
     def follow_dataset(
@@ -2517,9 +2529,82 @@ class SyncUDataDatasetsService(SyncUDataService, Protocol):
         mutation_policy: MutationPolicy | None = None,
     ) -> DatasetMutationResult: ...
 
+    def list(self, query: DatasetListQuery | None = None) -> UDataPageEnvelope: ...
+
+    def create(
+        self,
+        client_input: DatasetCreateInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> DatasetMutationResult: ...
+
+    def recent_atom(self, query: DatasetListQuery | None = None) -> NativeRecord: ...
+
+    def get(self, dataset_id: str) -> NativeRecord: ...
+
+    def update(
+        self,
+        dataset_id: str,
+        client_input: DatasetUpdateInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> DatasetMutationResult: ...
+
+    def delete(
+        self,
+        dataset_id: str,
+        permissions: EffectivePermissions,
+        options: DatasetDeleteOptions | None = None,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> DatasetMutationResult: ...
+
+    def feature(
+        self,
+        dataset_id: str,
+        permissions: EffectivePermissions | None = None,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> DatasetMutationResult: ...
+
+    def unfeature(
+        self,
+        dataset_id: str,
+        permissions: EffectivePermissions | None = None,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> DatasetMutationResult: ...
+
+    def rdf(self, dataset_id: str) -> NativeRecord | MutationReceipt: ...
+
+    def rdf_format(self, dataset_id: str, fmt: str) -> NativeRecord: ...
+
+    def suggest(self, query: DatasetSuggestQuery) -> tuple[NativeRecord, ...]: ...
+
+    def search_v2(self, query: DatasetSearchQuery | None = None) -> UDataPageEnvelope: ...
+
+    def list_v2(self, query: DatasetListQuery | None = None) -> UDataPageEnvelope: ...
+
+    def get_v2(self, dataset_id: str) -> NativeRecord: ...
+
+    def get_extras_v2(self, dataset_id: str) -> Mapping[str, object]: ...
+
+    def update_extras_v2(
+        self,
+        dataset_id: str,
+        client_input: DatasetExtrasUpdate,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> DatasetMutationResult: ...
+
+    def delete_extras_v2(
+        self,
+        dataset_id: str,
+        client_input: DatasetExtrasDelete,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> DatasetMutationResult: ...
+
 
 @runtime_checkable
-class AsyncUDataDatasetsService(AsyncUDataService, Protocol):
+class AsyncUDataDatasetsService(Protocol):
     async def list_dataset_followers(
         self, dataset_id: str, query: DatasetFollowersQuery | None = None
     ) -> MappingRecord: ...
@@ -2534,6 +2619,79 @@ class AsyncUDataDatasetsService(AsyncUDataService, Protocol):
     async def unfollow_dataset(
         self,
         dataset_id: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> DatasetMutationResult: ...
+
+    async def list(self, query: DatasetListQuery | None = None) -> UDataPageEnvelope: ...
+
+    async def create(
+        self,
+        client_input: DatasetCreateInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> DatasetMutationResult: ...
+
+    async def recent_atom(self, query: DatasetListQuery | None = None) -> NativeRecord: ...
+
+    async def get(self, dataset_id: str) -> NativeRecord: ...
+
+    async def update(
+        self,
+        dataset_id: str,
+        client_input: DatasetUpdateInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> DatasetMutationResult: ...
+
+    async def delete(
+        self,
+        dataset_id: str,
+        permissions: EffectivePermissions,
+        options: DatasetDeleteOptions | None = None,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> DatasetMutationResult: ...
+
+    async def feature(
+        self,
+        dataset_id: str,
+        permissions: EffectivePermissions | None = None,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> DatasetMutationResult: ...
+
+    async def unfeature(
+        self,
+        dataset_id: str,
+        permissions: EffectivePermissions | None = None,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> DatasetMutationResult: ...
+
+    async def rdf(self, dataset_id: str) -> NativeRecord | MutationReceipt: ...
+
+    async def rdf_format(self, dataset_id: str, fmt: str) -> NativeRecord: ...
+
+    async def suggest(self, query: DatasetSuggestQuery) -> tuple[NativeRecord, ...]: ...
+
+    async def search_v2(self, query: DatasetSearchQuery | None = None) -> UDataPageEnvelope: ...
+
+    async def list_v2(self, query: DatasetListQuery | None = None) -> UDataPageEnvelope: ...
+
+    async def get_v2(self, dataset_id: str) -> NativeRecord: ...
+
+    async def get_extras_v2(self, dataset_id: str) -> Mapping[str, object]: ...
+
+    async def update_extras_v2(
+        self,
+        dataset_id: str,
+        client_input: DatasetExtrasUpdate,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> DatasetMutationResult: ...
+
+    async def delete_extras_v2(
+        self,
+        dataset_id: str,
+        client_input: DatasetExtrasDelete,
         permissions: EffectivePermissions,
         mutation_policy: MutationPolicy | None = None,
     ) -> DatasetMutationResult: ...

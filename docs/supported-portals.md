@@ -1,10 +1,8 @@
 # Platform Contracts
 
-DataSluice targets three catalog platforms. In Phase 1 each platform is
-published as an explicit, typed connector contract pinned to the latest
-stable officially documented API — not as a live endpoint client. Live
-CKAN, uData, and Socrata clients ship in Phases 3–5 after controlled
-endpoint evidence is recorded against each pinned profile.
+DataSluice targets three catalog platforms. Each platform has an explicit,
+typed connector profile pinned to a documented API version. The profile
+defines the supported operations and capability classes.
 
 ## CKAN
 
@@ -22,8 +20,9 @@ from datasluice.connectors.catalog.ckan import CKANConnector, create_ckan_connec
 ## uData
 
 - **Package:** `datasluice.connectors.catalog.udata`
-- **Pinned profile:** uData `17.6.0`, API v1 (`udata-17.6.json`)
-- **Coverage:** the pinned profile encodes the uData v1 operation
+- **Evidence baseline:** uData `17.6.0`, API v1 and v2 (`udata-17.6.json`)
+- **Runtime range:** `>=17.0.0,<18.0.0`, loaded from the profile
+- **Coverage:** the profile encodes the uData v1 and v2 operation
   inventory across datasets, reuse, organizations, and community
   features, with the same per-operation capability classification.
 
@@ -31,9 +30,50 @@ from datasluice.connectors.catalog.ckan import CKANConnector, create_ckan_connec
 from datasluice.connectors.catalog.udata import UDataConnector, create_udata_connector
 ```
 
-uData is the open-source platform software behind data.gouv.fr;
+uData is the open-source platform software behind data.gouv.fr.
 DataSluice contracts with the platform API, not with any single
 deployment.
+
+DataSluice requires a valid `17.x` version from anonymous `/api/1/site/` evidence.
+It rejects missing, malformed, ambiguous, 16.x, and 18.x versions before API dispatch.
+The `17.6.0` profile remains the controlled evidence baseline.
+
+Each typed `/api/1` or `/api/2` operation must match the deployment's anonymous Swagger method and path.
+The client caches the needed Swagger document with the capability TTL.
+An absent route or method returns `UnsupportedCapabilityError` before the target request.
+Unavailable, malformed, oversized, or redirecting Swagger evidence returns `CatalogUnavailableError`.
+Call `client.invalidate()` to discard cached evidence.
+
+The anonymous `/api/1/site/` version probe and `/oauth` routes are the only Swagger exemptions.
+Typed site reads still require Swagger admission.
+OAuth still requires a supported version. Unaccepted 404 and 405 responses return a typed unsupported error.
+`oauth_error()` returns an `OAuthErrorDocument` for its modelled page statuses: 200, 404, and 500.
+The 17.6.0 evidence image lacks the error-page template, so its error page returns 500.
+Only the consent POST sends the uData API key. Other OAuth routes remain credential-free.
+Token and revocation forms carry their own client credentials.
+Route presence does not prove response compatibility. Changed payloads still fail through typed decoding.
+New deployment routes do not create typed methods. Public mutations remain prohibited.
+
+### Known public deployments
+
+uData does not publish an official registry of all public instances. The
+table below covers every uData deployment named by the
+[uData showcase](https://github.com/opendatateam/getudata.org/tree/master/data/showcase)
+and [dataportals.org](https://dataportals.org/) on 2026-10-24. It does not
+cover unlisted or private installations.
+
+| Portal | Origin | Version evidence | DataSluice support |
+|---|---|---|---|
+| France | <https://www.data.gouv.fr> | `17.16.0` from the [site API](https://www.data.gouv.fr/api/1/site/) | Yes, for declared operations present in Swagger. Bounded reads and redirect resolution passed on 2026-10-24. |
+| Luxembourg | <https://data.public.lu> | Not reported by the [site API](https://data.public.lu/api/1/site/) | No. The version gate rejects a missing `version`. |
+| Portugal | <https://dados.gov.pt> | `15.1.0` from the [site API](https://dados.gov.pt/api/1/site/). The [site footer](https://dados.gov.pt/) reports `16.0.0`. | No. The reported version is outside the `17.x` range. |
+| Serbia | <https://data.gov.rs> | `10.1.4.dev0` in the [site footer](https://data.gov.rs/). The [site API](https://data.gov.rs/api/1/site/) omits `version`. | No. The version gate rejects a missing `version`. |
+| Tunisia | <https://www.data4tunisia.org> | `17.3.0` from the [site API](https://www.data4tunisia.org/api/1/site/) | Yes, for declared operations present in Swagger. Bounded reads and redirect resolution passed on 2026-10-24. |
+
+The version and route gates stop unsupported requests before the target operation starts.
+The live checks used anonymous dataset search, dataset detail, resource metadata, and resource redirect resolution.
+They did not download resource bytes or mutate public deployments.
+Versions, routes, and response shapes can change after a portal upgrade.
 
 ## Socrata
 

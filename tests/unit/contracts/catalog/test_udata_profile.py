@@ -153,10 +153,6 @@ _USER_ROUTE_OPERATION_IDS = {
 }
 
 
-# Each recorded evidence family is claimed by the controlled test that drives it;
-# the read and mutation matrices are separate tests for the user and organization
-# families and one combined test for the OAuth family. A kind lists every test
-# whose passes jointly drive the recorded operations.
 _EVIDENCE_CLAIMING_TESTS: dict[str, dict[str, tuple[str, ...]]] = {
     "controlled_oauth_evidence": {
         "read": ("test_controlled_oauth_routes_match_raw_semantics_in_both_modes",),
@@ -292,9 +288,6 @@ def _read_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-# The stack digests pin the controlled environment a record was captured against.
-# The test digests deliberately track the current tests instead: 04-08 records
-# them "rather than a fresh capture", so only the stack digests are provenance.
 _PROVENANCE_FILES = {
     "dockerfile_sha256": "dev/udata-evidence/Dockerfile",
     "compose_sha256": "dev/udata-evidence/compose.yaml",
@@ -714,8 +707,6 @@ def test_controlled_oauth_evidence_covers_every_route_in_both_modes() -> None:
         method = operation.rsplit(".", 1)[-1].replace("-", "_")
         assert f'"{method}"' in controlled_source or f"auth_oauth.{method}(" in controlled_source, operation
 
-    # Both modes are claimed for both families, so both client families must appear
-    # in the read and the mutation pass.
     assert controlled_source.count("create_async_client(") >= 2, "async read and mutation passes are required"
     assert "asyncio.run(run_mutations_async())" in controlled_source
     assert "asyncio.run(run_async())" in controlled_source

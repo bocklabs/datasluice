@@ -279,7 +279,7 @@ def jsonld_context_request() -> tuple[str, str, dict[str, str], None]:
     return _request("GET", f"{_SITE_PATH}context.jsonld")
 
 
-def parse_site_profile(payload: object, *, operation: str = ROOT_OPERATION) -> SiteProfile:
+def parse_site_profile(payload: object, *, operation: str = ROOT_OPERATION, status_code: int = 200) -> SiteProfile:
     """Decode a typed site document while preserving unknown fields."""
     try:
         _validate_json_value(payload)
@@ -291,6 +291,14 @@ def parse_site_profile(payload: object, *, operation: str = ROOT_OPERATION) -> S
             platform="udata",
             safe_action="Verify the response against the pinned uData site schema.",
         ) from error
+    except RecursionError:
+        pass
+    raise NativeCatalogError(
+        "The uData site response exceeds the supported JSON nesting.",
+        operation=operation,
+        platform="udata",
+        status_code=status_code,
+    )
 
 
 def _validate_json_value(value: object) -> None:
@@ -657,34 +665,32 @@ def parse_jsonld_context(
     def reject_constant(value: str) -> None:
         raise ValueError(f"The uData JSON-LD context contains the non-JSON constant {value!r}.")
 
-    invalid_payload = False
     try:
         payload = json.loads(body, parse_constant=reject_constant)
-    except (TypeError, ValueError):
-        invalid_payload = True
-        payload = None
-    if invalid_payload:
-        raise NativeCatalogError(
-            "The uData JSON-LD context is not valid JSON.",
-            operation=operation,
-            platform="udata",
+        _validate_json_value(payload)
+        if not isinstance(payload, Mapping):
+            raise CatalogValidationError(
+                "The uData JSON-LD context must be a JSON object.",
+                operation=operation,
+                platform="udata",
+                safe_action="Verify the deployment serves the stock context.jsonld document.",
+            )
+        return parse_document(
+            body,
+            endpoint=endpoint,
+            expected_media_type=_JSON_LD_MEDIA_TYPE,
+            response_media_type=response_media_type,
             status_code=status_code,
-        )
-    if not isinstance(payload, Mapping):
-        raise CatalogValidationError(
-            "The uData JSON-LD context must be a JSON object.",
+            data=payload,
             operation=operation,
-            platform="udata",
-            safe_action="Verify the deployment serves the stock context.jsonld document.",
         )
-    return parse_document(
-        body,
-        endpoint=endpoint,
-        expected_media_type=_JSON_LD_MEDIA_TYPE,
-        response_media_type=response_media_type,
-        status_code=status_code,
-        data=payload,
+    except (TypeError, ValueError, RecursionError):
+        pass
+    raise NativeCatalogError(
+        "The uData JSON-LD context is not valid JSON.",
         operation=operation,
+        platform="udata",
+        status_code=status_code,
     )
 
 

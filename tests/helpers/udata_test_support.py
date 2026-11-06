@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING
+from urllib.parse import urlsplit
 
 from datasluice.connectors.catalog.udata.clients import (
     AsyncUDataClient,
@@ -107,6 +108,29 @@ def encoded_body(payload: object) -> bytes:
     return json.dumps(payload, separators=(",", ":")).encode()
 
 
+def swagger_response(request: RuntimeRequest, routes: Mapping[tuple[str, str], object]) -> RuntimeResponse | None:
+    path = urlsplit(request.url).path
+    if path not in {"/api/1/swagger.json", "/api/2/swagger.json"} or (request.method, request.url) in routes:
+        return None
+    base = path.removesuffix("/swagger.json")
+    paths: dict[str, dict[str, object]] = {}
+    for method, url in routes:
+        route = urlsplit(url).path
+        if route.startswith(base + "/"):
+            paths.setdefault(route.removeprefix(base), {})[method.lower()] = {}
+    return RuntimeResponse(
+        200,
+        {"Content-Type": "application/json"},
+        encoded_body(
+            {
+                "swagger": "2.0",
+                "basePath": base,
+                "paths": paths,
+            }
+        ),
+    )
+
+
 def json_media(payload: object) -> str:
     return "application/json"
 
@@ -126,6 +150,8 @@ class RouteRecorder:
         self.requests: list[RuntimeRequest] = []
 
     def response_for(self, request: RuntimeRequest) -> RuntimeResponse:
+        if response := swagger_response(request, self.routes):
+            return response
         self.requests.append(request)
         status, payload = self.routes[(request.method, request.url)]
         return RuntimeResponse(

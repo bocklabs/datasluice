@@ -48,6 +48,7 @@ from tests.helpers.udata_test_support import (
     async_client,
     async_route_table,
     atom_sync_route_table,
+    swagger_response,
     sync_client,
     sync_route_table,
     thawed,
@@ -673,6 +674,9 @@ class _RdfRouter(SyncRouteRouter):
         self._canonical_id = canonical_id
 
     def send(self, request: RuntimeRequest) -> RuntimeResponse:
+        routes = {self._route: None, ("GET", self._route[1].removesuffix("/rdf") + "/"): None}
+        if response := swagger_response(request, routes):
+            return response
         self.requests.append(request)
         if (request.method, urlsplit(request.url).path) == self._route:
             return RuntimeResponse(self._status, self._headers, self._body)
@@ -819,6 +823,8 @@ class _InterruptingRoutes:
         self.requests: list[RuntimeRequest] = []
 
     def _respond(self, request: RuntimeRequest) -> RuntimeResponse:
+        if response := swagger_response(request, {self._route: None, self._mutation: None}):
+            return response
         self.requests.append(request)
         if self.armed and (request.method, request.url) in {self._route, self._mutation}:
             raise self._interruption

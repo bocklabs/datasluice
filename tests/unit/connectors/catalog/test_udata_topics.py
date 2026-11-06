@@ -53,6 +53,7 @@ from tests.helpers.udata_test_support import (
     async_client,
     async_route_table,
     mutation_policy,
+    swagger_response,
     sync_client,
     sync_route_table,
     with_site_route,
@@ -1036,6 +1037,8 @@ class _InterruptingRoutes:
         self.requests: list[RuntimeRequest] = []
 
     def _respond(self, request: RuntimeRequest) -> RuntimeResponse:
+        if response := swagger_response(request, {self._route: None, ("GET", _LEVELS_URL): None}):
+            return response
         self.requests.append(request)
         if self.armed and (request.method, request.url) == self._route:
             raise self._interruption

@@ -35,6 +35,7 @@ from datasluice.runtime.transport.base import (
     RuntimeResponse,
     RuntimeStreamResponse,
 )
+from tests.helpers.udata_test_support import swagger_response
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable, Mapping
@@ -201,10 +202,16 @@ ROOT_FAILURE_IDS = frozenset(
 class _FixtureSyncTransport:
     def __init__(self, responder: Callable[[RuntimeRequest], RuntimeResponse]) -> None:
         self._responder = responder
+        self._swagger_routes = {
+            (cast("str", row["method"]), cast("str", row["path"]).replace("<format>", "json")): None
+            for row in _root_read_rows()
+        }
         self.requests: list[RuntimeRequest] = []
         self.stream_close_count = 0
 
     def send(self, request: RuntimeRequest) -> RuntimeResponse:
+        if response := swagger_response(request, self._swagger_routes):
+            return response
         self.requests.append(request)
         return self._responder(request)
 
@@ -228,10 +235,16 @@ class _FixtureSyncTransport:
 class _FixtureAsyncTransport:
     def __init__(self, responder: Callable[[RuntimeRequest], RuntimeResponse]) -> None:
         self._responder = responder
+        self._swagger_routes = {
+            (cast("str", row["method"]), cast("str", row["path"]).replace("<format>", "json")): None
+            for row in _root_read_rows()
+        }
         self.requests: list[RuntimeRequest] = []
         self.stream_close_count = 0
 
     async def send(self, request: RuntimeRequest) -> RuntimeResponse:
+        if response := swagger_response(request, self._swagger_routes):
+            return response
         self.requests.append(request)
         return self._responder(request)
 

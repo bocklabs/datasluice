@@ -33,6 +33,7 @@ from datasluice.domain.catalog.safety import ConcurrencyPolicy, ConfirmationPoli
 from datasluice.errors.catalog import CatalogUnavailableError, CatalogValidationError, ForbiddenError
 from datasluice.runtime.events import EventEmitter, ListSink
 from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse
+from tests.helpers.udata_test_support import swagger_response
 
 if TYPE_CHECKING:
     from datasluice.connectors.catalog.udata.mapping import UDataPageEnvelope
@@ -49,6 +50,8 @@ class _Router:
         self.requests: list[RuntimeRequest] = []
 
     def send(self, request: RuntimeRequest) -> RuntimeResponse:
+        if response := swagger_response(request, self.routes):
+            return response
         self.requests.append(request)
         status, payload = self.routes[(request.method, request.url)]
         return RuntimeResponse(
@@ -180,6 +183,31 @@ def test_every_assigned_user_route_has_exact_verb_and_path(name: str, method: st
     assert request[2] == {}
     if body is None:
         assert request[3] is None
+
+
+@pytest.mark.parametrize("async_mode", [False, True])
+@pytest.mark.parametrize("suffix", ["datasets", "community_resources", "reuses", "discussions"])
+def test_my_organization_queries_encode_string_filters(async_mode: bool, suffix: str) -> None:
+    path = f"/api/1/me/org_{suffix}/?q=a+b%26c"
+    routes = _routes(("GET", path, 200, [{"id": "item"}]))
+    if async_mode:
+
+        async def run() -> None:
+            transport = _AsyncRouter(routes)
+            async with AsyncUDataClient(
+                transport, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL
+            ) as client:
+                records = await getattr(client.users_tokens, f"my_org_{suffix}")(PERMISSIONS, q="a b&c")
+            assert records[0].payload["id"] == "item"
+            assert transport.requests[-1].url == f"{ORIGIN}{path}"
+
+        asyncio.run(run())
+    else:
+        transport = _Router(routes)
+        with SyncUDataClient(transport, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL) as client:
+            records = getattr(client.users_tokens, f"my_org_{suffix}")(PERMISSIONS, q="a b&c")
+        assert records[0].payload["id"] == "item"
+        assert transport.requests[-1].url == f"{ORIGIN}{path}"
 
 
 def test_user_wire_preserves_query_omission_and_body_presence() -> None:
@@ -663,7 +691,7 @@ def test_sync_interruption_after_dispatch_retains_cancelled_target_receipt() -> 
                 raise KeyboardInterrupt
             return super().send(request)
 
-    router = _InterruptedRouter(_routes())
+    router = _InterruptedRouter(_routes(("POST", "/api/1/me/api_tokens/", 200, None)))
     client = SyncUDataClient(router, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL)
     token_input = ApiTokenCreateInput()
     policy = _policy("create_api_token", "new-api-token")
@@ -684,7 +712,7 @@ def test_sync_generator_exit_after_dispatch_retains_cancelled_target_receipt() -
                 raise GeneratorExit
             return super().send(request)
 
-    router = _AbandonedRouter(_routes())
+    router = _AbandonedRouter(_routes(("POST", "/api/1/me/api_tokens/", 200, None)))
     client = SyncUDataClient(router, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL)
     token = ApiTokenCreateInput()
     policy = _policy("create_api_token", "new-api-token")
@@ -706,7 +734,7 @@ def test_sync_read_abandonment_settles_as_failed_before_reraising() -> None:
 
     events = ListSink()
     client = SyncUDataClient(
-        _AbandonedReadRouter(_routes()),
+        _AbandonedReadRouter(_routes(("GET", "/api/1/users/person/", 200, {}))),
         declared_udata_profile(),
         origin=ORIGIN,
         credentials=CREDENTIAL,
@@ -727,7 +755,7 @@ def test_async_read_abandonment_settles_as_failed_before_reraising() -> None:
 
     events = ListSink()
     client = AsyncUDataClient(
-        _AbandonedReadRouter(_routes()),
+        _AbandonedReadRouter(_routes(("GET", "/api/1/users/person/", 200, {}))),
         declared_udata_profile(),
         origin=ORIGIN,
         credentials=CREDENTIAL,

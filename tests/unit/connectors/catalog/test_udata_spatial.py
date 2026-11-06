@@ -31,6 +31,7 @@ from tests.helpers.udata_test_support import (
     anonymous_sync_client,
     async_client,
     async_route_table,
+    swagger_response,
     sync_client,
     sync_route_table,
     thawed,
@@ -309,6 +310,8 @@ class _InterruptingRoutes:
         self.requests: list[RuntimeRequest] = []
 
     def _respond(self, request: RuntimeRequest) -> RuntimeResponse:
+        if response := swagger_response(request, {self._route: None, ("GET", _LEVELS_URL): None}):
+            return response
         self.requests.append(request)
         if self.armed and (request.method, request.url) == self._route:
             raise self._interruption

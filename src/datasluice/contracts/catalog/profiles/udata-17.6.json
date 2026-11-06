@@ -1,6 +1,10 @@
 {
   "schema_version": "1.0",
   "profile_version": "17.6.0",
+  "compatibility": {
+    "minimum": "17.0.0",
+    "maximum_exclusive": "18.0.0"
+  },
   "platform": "udata",
   "platform_api_version": "uData API v1",
   "official_source_uri": "https://udata.readthedocs.io/en/17.6/",

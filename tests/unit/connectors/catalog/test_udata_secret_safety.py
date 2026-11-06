@@ -117,7 +117,12 @@ def test_malformed_authentication_failures_stay_unauthenticated_without_reason_c
                 return RuntimeResponse(401, {"Content-Type": "application/json"}, body)
             return super().send(request)
 
-    client = SyncUDataClient(RawBodyRouter(_routes()), declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL)
+    client = SyncUDataClient(
+        RawBodyRouter(_routes(("GET", "/api/1/me/api_tokens/", 200, {}))),
+        declared_udata_profile(),
+        origin=ORIGIN,
+        credentials=CREDENTIAL,
+    )
     with client, pytest.raises(UnauthenticatedError) as raised:
         client.users_tokens.list_api_tokens(PERMISSIONS)
     assert "reason_code" not in (raised.value.metadata or {})

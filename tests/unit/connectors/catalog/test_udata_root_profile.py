@@ -60,6 +60,7 @@ from datasluice.runtime.transport.base import (
 )
 from tests.helpers import udata_controlled as udata_evidence
 from tests.helpers.udata_controlled import _create_controlled_sync_client
+from tests.helpers.udata_test_support import swagger_response
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable, Generator, Mapping
@@ -844,6 +845,8 @@ class RouterTransport:
         self._suppress_next = False
 
     def send(self, request: RuntimeRequest) -> RuntimeResponse:
+        if response := swagger_response(request, self.routes):
+            return response
         suppress = self._suppress_next
         self._suppress_next = False
         if not suppress:
@@ -877,6 +880,8 @@ class AsyncRouterTransport:
         self._suppress_next = False
 
     async def send(self, request: RuntimeRequest) -> RuntimeResponse:
+        if response := swagger_response(request, self.routes):
+            return response
         suppress = self._suppress_next
         self._suppress_next = False
         if not suppress:
@@ -1484,6 +1489,48 @@ def test_row184_set_site_uses_patch_presence_and_exact_confirmation() -> None:
     assert [request.method for request in transport.requests] == ["GET", "GET"]
 
 
+@pytest.mark.parametrize("asynchronous", [False, True])
+def test_site_patch_interrupt_retains_cancelled_receipt(asynchronous: bool) -> None:
+    interruption = KeyboardInterrupt()
+    original_open = _ControlledProgramOpener.open
+
+    def interrupt_patch(
+        self: _ControlledProgramOpener, request: _ControlledProgramRequest, timeout: float
+    ) -> _ControlledProgramResponse:
+        if getattr(request, "method", None) == "PATCH":
+            raise interruption
+        return original_open(self, request, timeout)
+
+    routes = _routes(("PATCH", _SITE_URL, _json_response(200, _site_body(), {"Content-Type": "application/json"})))
+    with pytest.raises(KeyboardInterrupt) as raised:
+        if asynchronous:
+            _, async_client = _async_client(routes, credential=_CREDENTIAL)
+
+            async def run() -> None:
+                async with async_client:
+                    with patch.object(_ControlledProgramOpener, "open", interrupt_patch):
+                        await async_client.root_profile.set_site(
+                            SitePatchInput(title="Changed"), permissions=_PERMISSIONS, mutation_policy=_site_policy()
+                        )
+
+            asyncio.run(run())
+        else:
+            _, client = _sync_client(routes, credential=_CREDENTIAL)
+            with client, patch.object(_ControlledProgramOpener, "open", interrupt_patch):
+                client.root_profile.set_site(
+                    SitePatchInput(title="Changed"), permissions=_PERMISSIONS, mutation_policy=_site_policy()
+                )
+    assert raised.value is interruption
+    receipt = _receipt_from(raised.value)
+    assert receipt.operation == "udata/api-v1.set_site"
+    assert receipt.target.value == "site"
+    assert receipt.outcome == "cancelled"
+    metadata_receipt = vars(raised.value)["metadata"]["receipt"]
+    assert metadata_receipt["operation"] == receipt.operation
+    assert metadata_receipt["target"] == receipt.target.to_dict()
+    assert metadata_receipt["outcome"] == receipt.outcome
+
+
 def test_controlled_sync_dispatch_keeps_factory_bound_operations_after_helper_override() -> None:
     transport, client = _sync_client(
         _routes(
@@ -1817,7 +1864,9 @@ def test_root_export_emits_failure_only_after_stream_consumption_fails() -> None
             )
 
     events: list[Any] = []
-    transport = FailingStreamTransport(_routes())
+    transport = FailingStreamTransport(
+        _routes(("GET", _ORIGIN + "/api/1/site/datasets.csv", RuntimeResponse(200, {}, b"")))
+    )
     client = SyncUDataClient(
         transport,
         declared_udata_profile(),
@@ -1931,6 +1980,69 @@ def test_row195_jsonld_context_decodes_json_without_retaining_raw_bytes() -> Non
     assert document.media_type == "application/ld+json"
     assert "body" not in document.to_dict()
     assert transport.requests[-1].url == url
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+def test_jsonld_numeric_overflow_returns_bounded_native_error(asynchronous: bool) -> None:
+    url = f"{_ORIGIN}/api/1/site/context.jsonld"
+    routes = _routes(
+        (
+            "GET",
+            url,
+            _json_response(200, b'{"response-controlled-field":1e999}', {"Content-Type": "application/ld+json"}),
+        )
+    )
+    with pytest.raises(NativeCatalogError) as raised:
+        if asynchronous:
+            _, async_client = _async_client(routes)
+
+            async def run() -> None:
+                async with async_client:
+                    await async_client.root_profile.jsonld_context()
+
+            asyncio.run(run())
+        else:
+            _, client = _sync_client(routes)
+            with client:
+                client.root_profile.jsonld_context()
+    assert raised.value.operation == wire.ROOT_OPERATION
+    assert raised.value.status_code == 200
+    assert "response-controlled-field" not in str(raised.value)
+    assert raised.value.__cause__ is None
+    assert raised.value.__context__ is None
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.parametrize("method", ["get", "jsonld_context"])
+@pytest.mark.parametrize("depth", [600, 2000, 12000])
+def test_root_nested_json_returns_bounded_native_error(asynchronous: bool, method: str, depth: int) -> None:
+    url = _SITE_URL if method == "get" else f"{_SITE_URL}context.jsonld"
+    body = b'{"id":"site","title":"uData","version":"17.6.0","feed_size":0,"keywords":[],"metrics":{},'
+    body += b'"response-controlled-field":' + b"[" * depth + b"0" + b"]" * depth + b"}"
+    media_type = "application/json" if method == "get" else "application/ld+json"
+    response = _json_response(206, body, {"Content-Type": media_type})
+    with pytest.raises(NativeCatalogError) as raised:
+        if asynchronous:
+            async_transport, async_client = _async_client(_routes())
+
+            async def run() -> None:
+                async with async_client:
+                    await async_client.site_version()
+                    async_transport.routes[("GET", url)] = response
+                    await getattr(async_client.root_profile, method)()
+
+            asyncio.run(run())
+        else:
+            transport, client = _sync_client(_routes())
+            with client:
+                client.site_version()
+                transport.routes[("GET", url)] = response
+                getattr(client.root_profile, method)()
+    assert raised.value.operation == wire.ROOT_OPERATION
+    assert raised.value.status_code == 206
+    assert "response-controlled-field" not in str(raised.value)
+    assert raised.value.__cause__ is None
+    assert raised.value.__context__ is None
 
 
 @pytest.mark.parametrize("fmt", ("rdf", "owl"))
@@ -2116,7 +2228,7 @@ def test_fabricated_controlled_evidence_cannot_authorize_an_injected_transport()
 def test_service_helper_override_cannot_bypass_transport_registry(monkeypatch: pytest.MonkeyPatch) -> None:
     from datasluice.connectors.catalog.udata.services import root_profile as root_service
 
-    transport = RouterTransport(_routes())
+    transport = RouterTransport(_routes(("PATCH", _SITE_URL, _json_response(200, _site_body()))))
     client = create_sync_client(UDataClientSettings(base_url=_ORIGIN, credential=_CREDENTIAL, sync_transport=transport))
     monkeypatch.setattr(root_service, "_controlled_sync_site_id", lambda _: "site")
     monkeypatch.setattr(root_service, "_controlled_sync_revalidate", lambda *args, **kwargs: True)
@@ -2181,6 +2293,8 @@ def test_controlled_factory_rejects_injected_transport_before_any_dispatch() -> 
 def test_root_mutation_does_not_dispatch_through_injected_transport() -> None:
     class FailingTransport(RouterTransport):
         def send(self, request: RuntimeRequest) -> RuntimeResponse:
+            if response := swagger_response(request, self.routes):
+                return response
             suppress = self._suppress_next
             self._suppress_next = False
             if not suppress:
@@ -2190,7 +2304,9 @@ def test_root_mutation_does_not_dispatch_through_injected_transport() -> None:
     transport, client = _sync_client(
         {},
         credential=_CREDENTIAL,
-        test_transport=FailingTransport({}),
+        test_transport=FailingTransport(
+            _routes(("PATCH", _SITE_URL, _json_response(200, _site_body(), {"Content-Type": "application/json"})))
+        ),
     )
     with client:
         result = client.root_profile.set_site(

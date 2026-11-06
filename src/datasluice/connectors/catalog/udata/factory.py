@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, cast
 
+from datasluice.connectors.catalog.udata.compatibility import udata_version_policy
 from datasluice.connectors.catalog.udata.connector import UDataConnector
 from datasluice.contracts.catalog.protocols import (
     AsyncCatalogClient,
@@ -17,7 +18,6 @@ if TYPE_CHECKING:
     from datasluice.contracts.catalog.native.udata import AsyncUDataServices, SyncUDataServices
     from datasluice.domain.catalog.profiles import EffectiveCapabilityProfile
 
-_UDATA_PROFILE_VERSION = "17.6.0"
 _UDATA_API_VERSION = "uData API v1"
 _UDATA_PLATFORM = "udata"
 
@@ -51,8 +51,11 @@ def _require_udata_profile(profile: EffectiveCapabilityProfile | None) -> Effect
     if profile is None:
         raise ValueError("uData connectors require an effective uData capability profile.")
     declared = profile.declared_profile
-    if declared.profile_version != _UDATA_PROFILE_VERSION or declared.platform_api_version != _UDATA_API_VERSION:
-        raise ValueError("uData connectors require the pinned uData 17.6.0 API v1 profile.")
+    if (
+        not udata_version_policy().accepts(declared.profile_version)
+        or declared.platform_api_version != _UDATA_API_VERSION
+    ):
+        raise ValueError("uData connectors require a supported uData API v1 profile.")
     if not declared.operations or any(operation_id.platform != _UDATA_PLATFORM for operation_id in declared.operations):
         raise ValueError("uData connectors require a profile whose operations identify the uData platform.")
     return profile

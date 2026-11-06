@@ -18,6 +18,7 @@ from tests.helpers.udata_test_support import (
     SyncRouteRouter,
     async_client,
     encoded_body,
+    swagger_response,
     sync_client,
 )
 
@@ -30,6 +31,7 @@ def short_budget() -> TimeBudget:
 
 
 JOB_URL = f"{ORIGIN}/api/1/harvest/job/job-9/"
+_JOB_ROUTES = {("GET", JOB_URL): None}
 _SITE_RESPONSE = RuntimeResponse(
     status_code=200,
     headers={"Content-Type": "application/json"},
@@ -70,6 +72,8 @@ class PollingRouter:
         )
 
     def route(self, request: RuntimeRequest) -> RuntimeResponse:
+        if response := swagger_response(request, _JOB_ROUTES):
+            return response
         if request.url == f"{ORIGIN}/api/1/site/":
             return _SITE_RESPONSE
         if request.url == JOB_URL:

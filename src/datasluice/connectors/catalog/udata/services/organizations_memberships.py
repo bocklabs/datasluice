@@ -86,6 +86,10 @@ def _org_receipt(
 
 
 def _mutation_result(receipt: MutationReceipt, payload: object) -> OrganizationMutationResult:
+    if receipt.operation == wire.CREATE_ORGANIZATION_OPERATION:
+        return OrganizationMutationResult(
+            receipt=receipt, record=wire.parse_organization(payload, operation=receipt.operation)
+        )
     if isinstance(payload, Mapping) and isinstance(payload.get("id"), str) and isinstance(payload.get("name"), str):
         return OrganizationMutationResult(
             receipt=receipt, record=wire.parse_organization(payload, operation=receipt.operation)

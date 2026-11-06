@@ -7,7 +7,7 @@ import pytest
 from datasluice.connectors.catalog.udata.probes import (
     UDataVersionError,
     parse_site_version,
-    require_exact_version,
+    require_supported_version,
 )
 from datasluice.domain.catalog.auth import UDataCredential
 
@@ -47,11 +47,11 @@ def test_parse_site_version_fails_closed_with_typed_states(payload: dict[str, ob
     assert excinfo.value.safe_action
 
 
-def test_require_exact_version_rejects_any_other_release() -> None:
-    observed = parse_site_version(_site_payload(version="17.5.9"))
+def test_require_supported_version_rejects_any_other_release() -> None:
+    observed = parse_site_version(_site_payload(version="18.0.0"))
 
-    with pytest.raises(UDataVersionError, match="not the pinned"):
-        require_exact_version(observed, "17.6.0")
+    with pytest.raises(UDataVersionError, match="outside the supported range"):
+        require_supported_version(observed)
 
 
 def test_gate_caches_one_anonymous_probe_per_caller_identity() -> None:
@@ -71,7 +71,6 @@ def test_gate_caches_one_anonymous_probe_per_caller_identity() -> None:
 
     transport = Transport()
     gate = SiteVersionGate(
-        pinned_version="17.6.0",
         origin="http://127.0.0.1:5640",
         transport=transport,
         ttl_seconds=60,
@@ -90,6 +89,30 @@ def test_gate_caches_one_anonymous_probe_per_caller_identity() -> None:
     assert transport.calls == 3
 
 
+def test_gate_rejects_a_probe_invalidated_while_in_flight() -> None:
+    from datasluice.connectors.catalog.udata.probes import SiteVersionGate
+    from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse
+
+    class Transport:
+        gate: SiteVersionGate
+
+        def send(self, request: RuntimeRequest) -> RuntimeResponse:
+            self.gate.invalidate()
+            return RuntimeResponse(status_code=200, headers={}, body=json.dumps(_site_payload()).encode())
+
+        def close(self) -> None:
+            return None
+
+    transport = Transport()
+    gate = SiteVersionGate(origin="http://127.0.0.1:5640", transport=transport, ttl_seconds=60)
+    transport.gate = gate
+
+    with pytest.raises(UDataVersionError) as raised:
+        gate.require_current(None)
+
+    assert raised.value.version_state == "invalidated"
+
+
 @pytest.mark.parametrize("status", [401, 403, 423])
 def test_site_access_errors_preserve_status_and_capability_state(status: int) -> None:
     from datasluice.connectors.catalog.udata.probes import SiteVersionGate
@@ -97,8 +120,39 @@ def test_site_access_errors_preserve_status_and_capability_state(status: int) ->
     from tests.helpers.udata_test_support import sync_route_table
 
     router = sync_route_table({("GET", "http://127.0.0.1:5640/api/1/site/"): (status, {})})
-    gate = SiteVersionGate(pinned_version="17.6.0", origin="http://127.0.0.1:5640", transport=router, ttl_seconds=60)
+    gate = SiteVersionGate(origin="http://127.0.0.1:5640", transport=router, ttl_seconds=60)
     with pytest.raises(CatalogError) as raised:
         gate.require_current(None)
     assert raised.value.metadata["status_code"] == status
     assert raised.value.capability_state == {401: "unauthorized", 403: "forbidden", 423: "deployment-disabled"}[status]
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        b'{"version":"17.6.0","version":"18.0.0"}',
+        b'{"version":NaN}',
+        b"[" * 1000 + b"]" * 1000,
+    ],
+)
+def test_site_document_decode_rejects_invalid_json(body: bytes) -> None:
+    from datasluice.connectors.catalog.udata.probes import SiteVersionGate
+    from tests.helpers.udata_test_support import sync_route_table
+
+    router = sync_route_table({("GET", "http://127.0.0.1:5640/api/1/site/"): (200, body)})
+    gate = SiteVersionGate(origin="http://127.0.0.1:5640", transport=router, ttl_seconds=60)
+    with pytest.raises(UDataVersionError) as raised:
+        gate.require_current(None)
+    assert raised.value.version_state == "malformed"
+
+
+def test_site_document_decode_rejects_oversized_json() -> None:
+    from datasluice.connectors.catalog.udata.probes import SiteVersionGate
+    from tests.helpers.udata_test_support import sync_route_table
+
+    body = json.dumps({**_site_payload(), "title": "x" * (64 * 1024)}).encode()
+    router = sync_route_table({("GET", "http://127.0.0.1:5640/api/1/site/"): (200, body)})
+    gate = SiteVersionGate(origin="http://127.0.0.1:5640", transport=router, ttl_seconds=60)
+    with pytest.raises(UDataVersionError) as raised:
+        gate.require_current(None)
+    assert raised.value.version_state == "oversized"
