@@ -15,7 +15,9 @@
   },
   "timezone": "Europe/Luxembourg",
   "prConcurrentLimit": 5,
-  "dependencyDashboard": true,
+  "dependencyDashboard": {
+    "enabled": true
+  },
   "enabledManagers": [
     "github-actions",
     "pep621"
