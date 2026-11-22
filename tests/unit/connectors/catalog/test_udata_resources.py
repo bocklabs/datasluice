@@ -771,6 +771,14 @@ def test_reorder_and_v2_extras_keep_typed_results_and_exact_json_bodies() -> Non
             _PERMISSIONS,
             _policy("dataset", operation=wire.REORDER_OPERATION),
         )
+        with pytest.raises(ForbiddenError, match="destructive"):
+            client.resources.update_extras_v2(
+                "dataset",
+                "resource",
+                {"gone": None},
+                _PERMISSIONS,
+                _policy("resource", operation=wire.EXTRAS_UPDATE_OPERATION),
+            )
         updated = client.resources.update_extras_v2(
             "dataset",
             "resource",
@@ -877,9 +885,9 @@ def test_async_resource_mutations_resolve_the_credential_asynchronously() -> Non
             return await client.resources.update_extras_v2(
                 "dataset",
                 "resource",
-                {"key": "value"},
+                {"key": None},
                 _PERMISSIONS,
-                _policy("resource", operation=wire.EXTRAS_UPDATE_OPERATION),
+                _policy("resource", destructive=True, operation=wire.EXTRAS_UPDATE_OPERATION),
             )
 
     updated = asyncio.run(run())
@@ -901,9 +909,9 @@ def test_sync_extras_update_with_an_empty_204_body_succeeds() -> None:
         updated = client.resources.update_extras_v2(
             "dataset",
             "resource",
-            {"key": "value"},
+            {"key": None},
             _PERMISSIONS,
-            _policy("resource", operation=wire.EXTRAS_UPDATE_OPERATION),
+            _policy("resource", destructive=True, operation=wire.EXTRAS_UPDATE_OPERATION),
         )
 
     assert updated.extras == {}

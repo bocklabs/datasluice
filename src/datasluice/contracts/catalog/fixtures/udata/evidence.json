@@ -719,7 +719,7 @@
     "wheel_test_sha256": "35f595d47c0b01d1419653135dc3f15d561f6e49e882edde6274c30bd05da318",
     "wheel_tracer_sha256": "0750282bcd7bef4641cf0a6af624a347f318489ce296b0c03e3bf35a9d89aa83",
     "unit_test_sha256": "d6d33481701f435862fe5f438763c9f6d110d4144c23a5207a76c2fec1845d73",
-    "unit_probe_test_sha256": "209d115ad08e71f5a6ff040e801bb44f2401f77acd391a2f361b4b68362473a3",
+    "unit_probe_test_sha256": "d112d8f0491c49049d87561a6762358527d741719b7ca0115e56803900e2faff",
     "test_ids": [
       "test_controlled_extensions_and_probes_match_raw_routes_in_both_modes"
     ],

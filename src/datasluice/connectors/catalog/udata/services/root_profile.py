@@ -870,8 +870,8 @@ class AsyncRootProfileService:
                     response,
                     lambda: _parse_redirect(response.status_code, response.headers, path, self._client._origin),
                 )
-            except ASYNC_SETTLEMENT_ERRORS:
-                self._client._emit(_operation_id(ROOT_OPERATION), "failed")
+            except ASYNC_SETTLEMENT_ERRORS as error:
+                self._client._emit(_operation_id(ROOT_OPERATION), _failure_event(error))
                 raise
             self._client._emit(_operation_id(ROOT_OPERATION), "succeeded")
             return document
@@ -906,8 +906,8 @@ class AsyncRootProfileService:
                     response,
                     lambda: _parse_redirect(response.status_code, response.headers, path, self._client._origin),
                 )
-            except ASYNC_SETTLEMENT_ERRORS:
-                self._client._emit(_operation_id(ROOT_OPERATION), "failed")
+            except ASYNC_SETTLEMENT_ERRORS as error:
+                self._client._emit(_operation_id(ROOT_OPERATION), _failure_event(error))
                 raise
             self._client._emit(_operation_id(ROOT_OPERATION), "succeeded")
             return document

@@ -15,6 +15,7 @@ from datasluice.domain.catalog.models import (
     ResultEnvelope,
     redact_record_payload,
 )
+from datasluice.domain.catalog.redaction import contains_credential_content, redact_string
 from datasluice.errors.catalog import CatalogValidationError, NativeCatalogError
 
 _UDATA_V1_PAGE_ENVELOPE_ACTION = "Verify the deployment serves the stock uData v1 page envelope."
@@ -128,7 +129,7 @@ def _link_field(payload: Mapping[str, object], field_name: str, *, operation: st
             platform=PLATFORM.value,
             safe_action=_UDATA_V1_PAGE_ENVELOPE_ACTION,
         )
-    return value
+    return redact_string(value) if value is not None and contains_credential_content(value) else value
 
 
 def _string_field(payload: Mapping[str, object], field_name: str, *, operation: str) -> str | None:
@@ -211,8 +212,7 @@ def parse_dataset_summary(
 def shape_native_page(page: NativePage, records: tuple[UDataResultItem, ...]) -> UDataPageEnvelope:
     """Shape one decoded native page and its bound records into the typed result envelope.
 
-    The native pager is retained verbatim alongside the normalized cursor, so
-    present/absent field presence survives the projection.
+    The native pager preserves field presence and redacts credentials in links.
 
     Args:
         page: The presence-aware decoded pager.

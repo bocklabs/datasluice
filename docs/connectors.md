@@ -76,6 +76,8 @@ behind explicit safe-policy choices rather than defaults.
 The uData `datasets_list` bounded read requires `udata/api-v1.list-datasets` in both `CatalogOperationRequest` and `CatalogOperationGuard`.
 This corrects the earlier aggregate mutation identity. Callers must use the read identity.
 The aggregate `udata/api-v1.dataset-list-search-show-create-update-delete` profile declaration retains its mutation rules.
+For uData v2 dataset and resource extras, null values delete keys.
+An extras update that contains a null value requires target-specific confirmation and `MutationPolicy(destructive=True)`.
 
 ### Record serialization and retained evidence
 

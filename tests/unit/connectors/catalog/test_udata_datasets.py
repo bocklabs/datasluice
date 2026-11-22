@@ -408,16 +408,25 @@ def test_rows78_79_extras_read_and_null_delete_semantics() -> None:
     transport, client = _sync_client_with_transport(routes, _USER_CREDENTIAL)
     with client:
         assert client.datasets.get_extras_v2("abc") == {"keep": "v"}
+        with pytest.raises(ForbiddenError, match="destructive") as raised:
+            client.datasets.update_extras_v2(
+                "abc",
+                DatasetExtrasUpdate({"gone": None}),
+                permissions=_USER_PERMISSIONS,
+                mutation_policy=_mutation_policy("udata/api-v2.update-dataset-extras", "abc"),
+            )
+        assert _receipt_from(raised.value).outcome == "rejected"
         result = client.datasets.update_extras_v2(
             "abc",
             DatasetExtrasUpdate({"added": 1, "gone": None}),
             permissions=_USER_PERMISSIONS,
-            mutation_policy=_mutation_policy("udata/api-v2.update-dataset-extras", "abc"),
+            mutation_policy=_mutation_policy("udata/api-v2.update-dataset-extras", "abc", destructive=True),
         )
 
     assert result.extras == {"keep": "v", "added": 1}
     assert result.receipt.outcome == "succeeded"
     assert result.receipt.audit_metadata["mutation"] == "extras_updated"
+    assert sum(request.method == "PUT" for request in transport.requests) == 1
     request = transport.requests[-1]
     assert request.body is not None
     assert json.loads(request.body) == {"added": 1, "gone": None}
@@ -564,7 +573,7 @@ def _sync_calls(client: SyncUDataClient) -> dict[str, object]:
         "abc",
         DatasetExtrasUpdate({"added": 1, "gone": None}),
         permissions=user_permissions,
-        mutation_policy=_mutation_policy("udata/api-v2.update-dataset-extras", "abc"),
+        mutation_policy=_mutation_policy("udata/api-v2.update-dataset-extras", "abc", destructive=True),
     ).receipt.outcome
     results["delete_extras_v2"] = client.datasets.delete_extras_v2(
         "abc",
@@ -644,7 +653,7 @@ def test_async_dataset_service_matches_sync_wire_exactly() -> None:
                     "abc",
                     DatasetExtrasUpdate({"added": 1, "gone": None}),
                     permissions=user_permissions,
-                    mutation_policy=_mutation_policy("udata/api-v2.update-dataset-extras", "abc"),
+                    mutation_policy=_mutation_policy("udata/api-v2.update-dataset-extras", "abc", destructive=True),
                 )
             ).receipt.outcome
             results["delete_extras_v2"] = (
@@ -1195,6 +1204,15 @@ def test_cr06_create_receipt_uses_server_id_and_redacts_request_target() -> None
     assert transport.requests[-1].body is not None
 
 
+def test_create_rejection_keeps_auth_error_and_receipt_for_non_utf8_title() -> None:
+    transport, client = _sync_client_with_transport(_site_first({}), None)
+    with client, pytest.raises(UnauthenticatedError) as raised:
+        client.datasets.create(DatasetCreateInput(title="Title\ud800", description="D"), permissions=_USER_PERMISSIONS)
+
+    assert _receipt_from(raised.value).target.value.startswith("request:")
+    assert not any(request.method == "POST" for request in transport.requests)
+
+
 def test_wr01_rdf_encodes_once_and_rejects_dot_segments() -> None:
     method, path, _, _ = wire.rdf_request("a b", None)
     assert method == "GET"
@@ -1261,7 +1279,7 @@ def test_wr05_v1_page_retains_previous_link_and_field_presence() -> None:
         "page": 2,
         "page_size": 20,
         "previous_page": "http://127.0.0.1:5640/api/1/datasets/?page=1",
-        "next_page": None,
+        "next_page": "/api/1/datasets/?page=3&token=redact-this",
         "total": 3,
     }
     routes = _site_first({("GET", "http://127.0.0.1:5640/api/1/datasets/?page=1&page_size=20"): body})
@@ -1269,6 +1287,8 @@ def test_wr05_v1_page_retains_previous_link_and_field_presence() -> None:
         envelope = client.datasets.list()
 
     assert envelope.native_page.previous_page == "http://127.0.0.1:5640/api/1/datasets/?page=1"
+    assert envelope.native_page.next_page == f"/api/1/datasets/?page=3&token={REDACTED}"
+    assert "redact-this" not in repr(envelope)
     assert "previous_page" in envelope.native_page.present_fields
     assert envelope.platform is not None
     metadata = cast("dict[str, object]", envelope.platform.extensions["udata.page"])

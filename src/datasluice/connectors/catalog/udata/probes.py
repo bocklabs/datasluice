@@ -31,7 +31,6 @@ if TYPE_CHECKING:
 SITE_PATH = "/api/1/site/"
 SITE_OPERATION_ID = "udata/api-v1.root-and-effective-profile-probe"
 _VERSION_PATTERN = _VERSION
-_SITE_KEYS = frozenset({"feed_size", "id", "keywords", "metrics", "title", "version"})
 _SITE_PROBE_MAX_BYTES = 64 * 1024
 
 
@@ -81,9 +80,7 @@ def parse_site_version(payload: object) -> SiteVersion:
         The bounded site evidence when the payload identifies a supported version.
 
     Raises:
-        UDataVersionError: When the version key is missing, malformed, or
-            ambiguous. The error carries the bounded ``version_state`` and a
-            typed caller remedy.
+        UDataVersionError: When the version field is missing or malformed.
     """
     if not isinstance(payload, dict):
         raise UDataVersionError(
@@ -91,23 +88,12 @@ def parse_site_version(payload: object) -> SiteVersion:
             message="The uData site probe did not return a JSON object payload.",
             safe_action="Retry against a stock uData deployment serving /api/1/site/ JSON.",
         )
-    unknown_version_shaped = [
-        key
-        for key, value in payload.items()
-        if key in _SITE_KEYS and key != "version" and isinstance(value, str) and _VERSION_PATTERN.fullmatch(value)
-    ]
     version = payload.get("version")
     if "version" not in payload:
         raise UDataVersionError(
             version_state="missing",
             message="The uData site probe response omitted the version field.",
             safe_action="Verify the deployment exposes the stock /api/1/site/ document before dispatching.",
-        )
-    if unknown_version_shaped:
-        raise UDataVersionError(
-            version_state="ambiguous",
-            message="The uData site probe response carries conflicting version evidence.",
-            safe_action="Verify the deployment serves an unmodified stock /api/1/site/ document.",
         )
     if not isinstance(version, str) or not _VERSION_PATTERN.fullmatch(version):
         raise UDataVersionError(

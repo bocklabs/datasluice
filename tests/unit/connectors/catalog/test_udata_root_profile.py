@@ -50,7 +50,7 @@ from datasluice.errors.catalog import (
     NativeCatalogError,
 )
 from datasluice.exceptions import DataSluiceError
-from datasluice.runtime.events import EventEmitter
+from datasluice.runtime.events import EventEmitter, EventEnvelope
 from datasluice.runtime.transport.base import (
     AsyncRuntimeStreamResponse,
     RuntimeRequest,
@@ -1879,6 +1879,39 @@ def test_root_export_emits_failure_only_after_stream_consumption_fails() -> None
 
     assert events[-1].outcome == "failed"
     assert not any(event.outcome == "succeeded" for event in events if event.operation_id == wire.ROOT_OPERATION)
+
+
+def test_async_root_export_records_cancellation_during_redirect_cleanup() -> None:
+    def cancel() -> None:
+        raise asyncio.CancelledError
+
+    class CancelledRedirectTransport(AsyncRouterTransport):
+        async def send_stream(self, request: RuntimeRequest) -> AsyncRuntimeStreamResponse:
+            response = await super().send_stream(request)
+            response.close_callback = cancel
+            return response
+
+    path = "/api/1/site/datasets.csv"
+    transport = CancelledRedirectTransport(
+        _routes(("GET", _ORIGIN + path, _json_response(302, None, {"Location": path})))
+    )
+    events: list[EventEnvelope] = []
+    client = AsyncUDataClient(
+        transport,
+        declared_udata_profile(),
+        origin=_ORIGIN,
+        emitter=EventEmitter(sinks=(events.append,)),
+        owns_transport=False,
+    )
+
+    async def run() -> None:
+        async with client:
+            await client.root_profile.datasets_csv()
+
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(run())
+
+    assert [event.outcome for event in events if event.operation_id == wire.ROOT_OPERATION] == ["cancelled"]
 
 
 def test_async_site_patch_matches_sync_target_and_receipt_contract() -> None:

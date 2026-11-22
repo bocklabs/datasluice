@@ -23,8 +23,9 @@ def _site_payload(version: str = "17.6.0") -> dict[str, object]:
     }
 
 
-def test_parse_site_version_accepts_the_exact_stock_document() -> None:
-    observed = parse_site_version(_site_payload())
+@pytest.mark.parametrize("title", ["uData", "17.6.0"])
+def test_parse_site_version_accepts_the_exact_stock_document(title: str) -> None:
+    observed = parse_site_version({**_site_payload(), "title": title})
 
     assert observed.version == "17.6.0"
     assert observed.site_id == "site-evidence"
@@ -36,7 +37,6 @@ def test_parse_site_version_accepts_the_exact_stock_document() -> None:
         ({}, "missing"),
         (_site_payload(version="not-a-version"), "malformed"),
         (_site_payload(version="17.6.0.0"), "malformed"),
-        ({**_site_payload(), "title": "17.6.0"}, "ambiguous"),
     ],
 )
 def test_parse_site_version_fails_closed_with_typed_states(payload: dict[str, object], state: str) -> None:

@@ -110,14 +110,11 @@ def _require_mutation_permission(
 def _safe_target_value(target_id: object, *, opaque: bool = False) -> str:
     """Return a bounded receipt target without retaining credential-shaped input."""
     raw = target_id if isinstance(target_id, str) else type(target_id).__name__
-    if opaque or contains_credential_content(raw):
-        digest = hashlib.sha256(raw.encode()).hexdigest()[:24]
-        return f"request:{digest}"
-    scrubbed = redact_string(raw)
-    if not scrubbed or len(scrubbed) > 64 or any(not character.isprintable() for character in scrubbed):
-        digest = hashlib.sha256(raw.encode()).hexdigest()[:24]
-        return f"request:{digest}"
-    return scrubbed
+    if not opaque and not contains_credential_content(raw):
+        scrubbed = redact_string(raw)
+        if scrubbed and len(scrubbed) <= 64 and scrubbed.isprintable():
+            return scrubbed
+    return f"request:{hashlib.sha256(raw.encode(errors='surrogatepass')).hexdigest()[:24]}"
 
 
 def _receipt_target(target_id: object, *, opaque: bool = False) -> CatalogId:
@@ -370,7 +367,9 @@ def _sync_extras_update_dispatch(
 ) -> tuple[int, object, object]:
     identifier = wire._required_id(dataset_id, operation=operation)
     resolved = _require_mutation_permission(client._resolved_credential(), operation, permissions)
-    _enforce_mutation_policy(operation, identifier, mutation_policy)
+    _enforce_mutation_policy(
+        operation, identifier, mutation_policy, destructive=any(value is None for value in client_input.values.values())
+    )
     method, path, _, body = wire.v2_extras_put_request(identifier, client_input)
     return client._dataset_call(
         method=method,
@@ -537,7 +536,9 @@ async def _async_extras_update_dispatch(
     identifier = wire._required_id(dataset_id, operation=operation)
     resolved = await client._resolved_credential_async()
     _require_mutation_permission(resolved, operation, permissions)
-    _enforce_mutation_policy(operation, identifier, mutation_policy)
+    _enforce_mutation_policy(
+        operation, identifier, mutation_policy, destructive=any(value is None for value in client_input.values.values())
+    )
     method, path, _, body = wire.v2_extras_put_request(identifier, client_input)
     return await client._dataset_call_async(
         method=method,
@@ -906,7 +907,10 @@ class SyncDatasetsService:
         permissions: EffectivePermissions,
         mutation_policy: MutationPolicy | None = None,
     ) -> DatasetMutationResult:
-        """PUT /api/2/datasets/<id>/extras/ (row 79); null values delete keys."""
+        """Update dataset extras.
+
+        Null values delete keys and require destructive confirmation.
+        """
         operation = wire.DATASET_OPERATIONS["v2_update_extras"]
         return _mutating(
             operation,
@@ -1314,7 +1318,10 @@ class AsyncDatasetsService:
         permissions: EffectivePermissions,
         mutation_policy: MutationPolicy | None = None,
     ) -> DatasetMutationResult:
-        """PUT /api/2/datasets/<id>/extras/ (row 79); null values delete keys."""
+        """Update dataset extras.
+
+        Null values delete keys and require destructive confirmation.
+        """
         operation = wire.DATASET_OPERATIONS["v2_update_extras"]
         return await _amutating(
             operation,
