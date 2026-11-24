@@ -171,6 +171,13 @@ def build_request(name: str, *, identifier: str | None = None, query: object = N
                 ("delete_comments", str(query.delete_comments).lower()),
             ]
         )
+    elif isinstance(query, str) and name in {
+        "my_org_datasets",
+        "my_org_community_resources",
+        "my_org_reuses",
+        "my_org_discussions",
+    }:
+        path += _query([("q", query)])
     elif query is not None:
         raise ValueError("Unsupported uData user query input.")
     expected = _BODY_INPUTS.get(name)

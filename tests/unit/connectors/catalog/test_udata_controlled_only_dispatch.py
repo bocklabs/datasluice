@@ -76,7 +76,7 @@ def test_public_origin_refuses_a_confirmed_destructive_oauth_revocation() -> Non
         policy = _confirmed(oauth_wire.OPERATIONS["revoke_token"], "request:revoke_token")
         with pytest.raises(CatalogError, match="controlled local deployment"):
             client.auth_oauth.revoke_token(body, PERMISSIONS, policy)
-    assert all(request.url.endswith("/api/1/site/") for request in router.requests)
+    assert router.requests == []
 
 
 def test_public_origin_refuses_api_token_creation() -> None:
@@ -87,7 +87,7 @@ def test_public_origin_refuses_api_token_creation() -> None:
         policy = _confirmed(users_wire.OPERATIONS["create_api_token"], "new-api-token", destructive=False)
         with pytest.raises(CatalogError, match="controlled local deployment"):
             client.users_tokens.create_api_token(body, PERMISSIONS, policy)
-    assert all(request.url.endswith("/api/1/site/") for request in router.requests)
+    assert router.requests == []
 
 
 def test_async_public_origin_refuses_the_same_revocation() -> None:
@@ -104,7 +104,7 @@ def test_async_public_origin_refuses_the_same_revocation() -> None:
     coroutine = run()
     with pytest.raises(CatalogError, match="controlled local deployment"):
         asyncio.run(coroutine)
-    assert all(request.url.endswith("/api/1/site/") for request in router.requests)
+    assert router.requests == []
 
 
 def test_public_origin_still_serves_a_declared_read() -> None:

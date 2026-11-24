@@ -104,3 +104,29 @@ uv run python scripts/capture_udata_route_documents.py url-map --input /tmp/udat
 The URL-map dump command emits only `{path, method, endpoint}` records for `/api/1`, `/api/2`, and `/oauth` rules. Both captures remove the flask-restx documentation endpoints (`/`, `/swagger.json`), ignore implicit `HEAD`/`OPTIONS` methods, and canonicalize parameter spellings. Generated Swagger cannot express the OAuth blueprint, so reconciliation requires Swagger to match the v1/v2 subset exactly while the URL map must match the full source set. Namespace exclusions such as `/api/1/proconnect` are explicit `--exclude-namespace` scope decisions recorded in the preflight, never silent omissions.
 
 Capture review artifacts under `reviews/<family>/<reviewed-sha>/` with `source-review.md`, `current-thread.json`, and `review-receipt.json`. The checker rejects mutable reuse, self-review, unsafe artifacts, missing classifications, invalid post-fix provenance, digest mismatches, and anything not bound to the current Git HEAD.
+
+Both export forms use `schema_version: 1`, the exact `reviewed_sha`, and a `threads` list in `current-thread.json`:
+
+- A classified export contains one or more findings. Each finding requires `classification: fixed`, `invalid`, or `not_actionable`. Existing classified exports remain valid without migration.
+- A clean export contains `threads: []` and a `clean_review` object. Bare empty exports fail. A clean attestation cannot accompany any finding, including an unresolved finding.
+
+The clean attestation requires these fields:
+
+| Field | Required value |
+|---|---|
+| `verdict` | The exact string `no_findings` |
+| `reviewer_id` | The nonblank actual native reviewer ID, equal to the capture and receipt identity |
+| `source_review_sha256` | The lowercase SHA-256 digest of the actual `source-review.md` bytes |
+| `scope` | A nonempty list of nonblank inspected repository file paths |
+| `evidence` | A nonempty list of nonblank source or test references that the reviewer inspected |
+| `method` | A nonblank description of the review that occurred |
+| `limitations` | Nonblank evidence limits, including the absence of new live checks when applicable |
+
+Capture and verification apply the same attestation checks. Both forms retain receipt schema version 1 and digests for the report and thread bytes.
+Both retain author/reviewer separation, exact SHA binding, redaction, safe artifacts, same-family parent linkage, and immutable captures.
+Capture checks both copied artifacts before atomic publication. Duplicate SHA directories remain prohibited.
+
+The native run record establishes factual reviewer provenance. A Git author label does not establish reviewer identity or separation.
+The parent must compare scope and evidence with the genuine report and native run record.
+Machine checks validate structure and binding. They cannot prove that a review occurred.
+An invented finding or identity cannot replace genuine evidence. Temporary test fixtures are never certification evidence.

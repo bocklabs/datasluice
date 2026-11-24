@@ -247,6 +247,15 @@ def parse_resource(payload: object) -> NativeRecord:
             platform="udata",
             safe_action=RESOURCE_SCHEMA_SAFE_ACTION,
         )
+    if ("title" in payload and not isinstance(payload["title"], str)) or (
+        payload.get("filesize") is not None and type(payload["filesize"]) is not int
+    ):
+        raise CatalogValidationError(
+            "The uData resource response contains an invalid title or filesize.",
+            operation=RESOURCE_OPERATION,
+            platform="udata",
+            safe_action=RESOURCE_SCHEMA_SAFE_ACTION,
+        )
     identifier = cast("str", payload["id"])
     return NativeRecord(
         platform=CatalogPlatform.UDATA,

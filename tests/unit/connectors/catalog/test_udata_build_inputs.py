@@ -190,5 +190,5 @@ def test_uv_rejects_build_dependencies_without_a_trusted_hash(tmp_path: Path, ev
         check=False,
     )
     assert result.returncode != 0
-    assert "no trusted hash was provided for: `evidence-probe`" in result.stderr
+    assert "no trusted hash was provided for: `evidence-probe`" in " ".join(result.stderr.split())
     assert not (tmp_path / "target/evidence_probe-1.0.dist-info").exists()

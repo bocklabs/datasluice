@@ -15,6 +15,7 @@ from datasluice.domain.catalog.models import (
     ResultEnvelope,
     redact_record_payload,
 )
+from datasluice.domain.catalog.redaction import contains_credential_content, redact_string
 from datasluice.errors.catalog import CatalogValidationError, NativeCatalogError
 
 _UDATA_V1_PAGE_ENVELOPE_ACTION = "Verify the deployment serves the stock uData v1 page envelope."
@@ -23,7 +24,7 @@ PLATFORM = CatalogPlatform.UDATA
 
 NATIVE_PAGE_FIELDS = ("data", "page", "page_size", "previous_page", "next_page", "total")
 _PAGED_PATH = "/api/1/datasets/"
-_DATASETS_OPERATION_ID = "udata/api-v1.dataset-list-search-show-create-update-delete"
+_DATASETS_OPERATION_ID = "udata/api-v1.list-datasets"
 
 
 @dataclass(frozen=True, slots=True)
@@ -128,7 +129,7 @@ def _link_field(payload: Mapping[str, object], field_name: str, *, operation: st
             platform=PLATFORM.value,
             safe_action=_UDATA_V1_PAGE_ENVELOPE_ACTION,
         )
-    return value
+    return redact_string(value) if value is not None and contains_credential_content(value) else value
 
 
 def _string_field(payload: Mapping[str, object], field_name: str, *, operation: str) -> str | None:
@@ -186,7 +187,9 @@ def parse_native_page(payload: object, *, operation: str = _DATASETS_OPERATION_I
     )
 
 
-def parse_dataset_summary(item: Mapping[str, object], *, operation: str = _DATASETS_OPERATION_ID) -> NativeRecord:
+def parse_dataset_summary(
+    item: Mapping[str, object], *, operation: str = _DATASETS_OPERATION_ID, status_code: int | None = None
+) -> NativeRecord:
     """Redact credential-bearing fields before the dataset item enters a runtime record.
 
     Preserve all other fields. Use ``to_evidence_dict`` for bounded evidence without field values.
@@ -196,7 +199,7 @@ def parse_dataset_summary(item: Mapping[str, object], *, operation: str = _DATAS
     """
     from datasluice.connectors.catalog.udata.wire.datasets import _validate_dataset_fields
 
-    _validate_dataset_fields(item, operation=operation, detail=False)
+    _validate_dataset_fields(item, operation=operation, detail=False, status_code=status_code)
     identifier = cast("str", item["id"])
     return NativeRecord(
         platform=PLATFORM,
@@ -209,8 +212,7 @@ def parse_dataset_summary(item: Mapping[str, object], *, operation: str = _DATAS
 def shape_native_page(page: NativePage, records: tuple[UDataResultItem, ...]) -> UDataPageEnvelope:
     """Shape one decoded native page and its bound records into the typed result envelope.
 
-    The native pager is retained verbatim alongside the normalized cursor, so
-    present/absent field presence survives the projection.
+    The native pager preserves field presence and redacts credentials in links.
 
     Args:
         page: The presence-aware decoded pager.
@@ -242,9 +244,11 @@ def shape_native_page(page: NativePage, records: tuple[UDataResultItem, ...]) ->
     return UDataPageEnvelope(items=records, page=page_info, platform=metadata, native_page=native_page)
 
 
-def shape_dataset_page(page: NativePage, *, operation: str = _DATASETS_OPERATION_ID) -> UDataPageEnvelope:
+def shape_dataset_page(
+    page: NativePage, *, operation: str = _DATASETS_OPERATION_ID, status_code: int | None = None
+) -> UDataPageEnvelope:
     """Shape one decoded native page into the typed result envelope."""
-    records = tuple(parse_dataset_summary(item, operation=operation) for item in page.items)
+    records = tuple(parse_dataset_summary(item, operation=operation, status_code=status_code) for item in page.items)
     return shape_native_page(page, records)
 
 

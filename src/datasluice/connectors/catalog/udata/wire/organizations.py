@@ -481,7 +481,7 @@ def parse_extras(payload: object, *, operation: str = GET_ORGANIZATION_EXTRAS_OP
             platform=PLATFORM.value,
             safe_action="Verify the response against the pinned uData extras schema.",
         )
-    return MappingProxyType(redact_record_payload(payload))
+    return MappingRecord(payload=redact_record_payload(payload)).payload
 
 
 __all__ = [

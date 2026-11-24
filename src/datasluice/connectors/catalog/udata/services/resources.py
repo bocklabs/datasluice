@@ -538,7 +538,8 @@ class SyncResourcesService:
         mutation_policy: Policy = None,
     ) -> Result:
         try:
-            method, path, _, body = wire.v2_extras_request("PUT", dataset_id, resource_id, dict(values))
+            payload = dict(values)
+            method, path, _, body = wire.v2_extras_request("PUT", dataset_id, resource_id, payload)
         except SETTLEMENT_ERRORS as error:
             _reject_receipt(
                 error,
@@ -553,7 +554,7 @@ class SyncResourcesService:
             resource_id,
             mutation_policy,
             "extras_updated",
-            False,
+            any(value is None for value in payload.values()),
             lambda: self._call(method, path, body, permissions, mutation_policy),
         )
 
@@ -1000,7 +1001,8 @@ class AsyncResourcesService:
         mutation_policy: Policy = None,
     ) -> Result:
         try:
-            method, path, _, body = wire.v2_extras_request("PUT", dataset_id, resource_id, dict(values))
+            payload = dict(values)
+            method, path, _, body = wire.v2_extras_request("PUT", dataset_id, resource_id, payload)
         except ASYNC_SETTLEMENT_ERRORS as error:
             _reject_receipt(
                 error,
@@ -1015,7 +1017,7 @@ class AsyncResourcesService:
             resource_id,
             mutation_policy,
             "extras_updated",
-            False,
+            any(value is None for value in payload.values()),
             lambda: self._call(method, path, body, permissions, mutation_policy),
             operation=wire.EXTRAS_UPDATE_OPERATION,
         )

@@ -8,6 +8,7 @@ import sys
 
 import pytest
 
+from datasluice.connectors.catalog.udata.compatibility import udata_version_policy
 from datasluice.connectors.catalog.udata.drift import (
     APPROVED_TARGETS,
     DRIFT_SCHEMA_VERSION,
@@ -17,7 +18,6 @@ from datasluice.connectors.catalog.udata.drift import (
     MAX_READS_PER_RUN,
     MAX_TARGETS_PER_RUN,
     OUTAGE,
-    PINNED_UDATA_VERSION,
     READ_ALLOWLIST,
     UDataDriftUnavailableError,
     run_udata_drift,
@@ -35,7 +35,7 @@ from scripts.check_udata_drift import (
 _DISABLED_REPORT_KEYS = {
     "schema_version",
     "status",
-    "pinned_version",
+    "supported_range",
     "approved_targets",
     "max_targets_per_run",
     "max_reads_per_run",
@@ -70,7 +70,7 @@ def test_t01_the_entry_point_exits_disabled_and_names_no_target() -> None:
     assert report["status"] == "disabled"
     assert report["approved_targets"] == 0
     assert report["schema_version"] == DRIFT_SCHEMA_VERSION
-    assert report["pinned_version"] == PINNED_UDATA_VERSION == "17.6.0"
+    assert report["supported_range"] == udata_version_policy().supported_range
 
 
 def test_t02_the_disabled_report_publishes_only_bounds_and_no_content() -> None:

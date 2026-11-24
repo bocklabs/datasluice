@@ -20,6 +20,7 @@ from tests.helpers.udata_test_support import (
     UDATA_PERMISSIONS,
     async_client,
     async_route_table,
+    swagger_response,
     sync_client,
     sync_route_table,
     with_site_route,
@@ -83,10 +84,12 @@ def test_cold_probe_shares_wait_deadline(
 
 
 @pytest.mark.parametrize("asynchronous", [False, True])
-@pytest.mark.parametrize("phase", ["preflight", "mutation", "read"])
+@pytest.mark.parametrize(
+    ("phase", "receipt_outcome"), [("preflight", "failed"), ("mutation", "ambiguous"), ("read", None)]
+)
 @pytest.mark.parametrize("transport_raises", [False, True])
 def test_deadline_settlement_preserves_dispatch_evidence(
-    asynchronous: bool, phase: str, transport_raises: bool, monkeypatch: pytest.MonkeyPatch
+    asynchronous: bool, phase: str, receipt_outcome: str | None, transport_raises: bool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     now = [0.0]
     requests: list[RuntimeRequest] = []
@@ -103,6 +106,8 @@ def test_deadline_settlement_preserves_dispatch_evidence(
     )
 
     def respond(request: RuntimeRequest) -> RuntimeResponse:
+        if result := swagger_response(request, routes):
+            return result
         requests.append(request)
         if request.url.endswith("/api/1/site/") == (phase == "preflight"):
             now[0] = 2.0
@@ -145,7 +150,7 @@ def test_deadline_settlement_preserves_dispatch_evidence(
     else:
         receipt = getattr(error, "mutation_receipt", None)
         assert isinstance(receipt, MutationReceipt)
-        assert receipt.outcome == ("ambiguous" if phase == "mutation" else "failed")
+        assert receipt.outcome == receipt_outcome
     assert len(requests) == (1 if phase == "preflight" else 2)
 
 

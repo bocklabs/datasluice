@@ -92,17 +92,8 @@ _METHODS = dict.fromkeys(("access_token", "revoke_token", "authorize_post"), "PO
 _METHODS.update(dict.fromkeys(("client_info", "authorize", "oauth_error"), "GET"))
 _FORM_BODIES = frozenset({"access_token", "revoke_token", "authorize_post"})
 
-# Which stock route authenticates the caller with the uData API key, transcribed from
-# udata/api/oauth2.py at v17.6.0. The RFC 6749 and RFC 7009 forms carry their own client
-# secret and the login_required authorize GET rejects an API key outright, so only the
-# consent POST may send it. A new route stays credential-free until it is declared here,
-# which fails closed rather than leaking the key.
 _CREDENTIAL_ROUTES = frozenset({"authorize_post"})
 
-# The stock /oauth/error route is a terminal HTML page rather than a redirect. The
-# 17.6.0 image does not ship api/oauth_error.html, so the deployment itself answers
-# 500. That status is the modelled outcome of the route, not a transport failure, so
-# it is returned to the caller instead of being raised past the typed surface.
 _ERROR_PAGE_STATUSES = frozenset({200, 404, 500})
 
 

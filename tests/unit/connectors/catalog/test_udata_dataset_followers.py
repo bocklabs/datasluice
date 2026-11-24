@@ -5,7 +5,7 @@ import inspect
 import json
 from dataclasses import replace
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
@@ -33,6 +33,22 @@ from datasluice.domain.catalog.safety import (
 from datasluice.errors.catalog import CatalogError, CatalogValidationError, ForbiddenError, UnauthenticatedError
 from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse, TransportError
 from tests.unit.connectors.catalog.test_udata_datasets import RouterAsyncTransport, RouterTransport, _site_first
+
+if TYPE_CHECKING:
+    from datasluice.connectors.catalog.udata.connector import UDataConnector
+
+    def sync_dataset_contract(connector: UDataConnector, client: SyncUDataClient) -> None:
+        service: SyncUDataDatasetsService = client.datasets
+        service = connector.native_sync.datasets
+        connector.native_sync.datasets.list()
+        service.get("dataset-id")
+
+    async def async_dataset_contract(connector: UDataConnector, client: AsyncUDataClient) -> None:
+        service: AsyncUDataDatasetsService = client.datasets
+        service = connector.native_async.datasets
+        await connector.native_async.datasets.list()
+        await service.get("dataset-id")
+
 
 ORIGIN = "http://127.0.0.1:5640"
 DATASET = "507f1f77bcf86cd799439011"
@@ -364,6 +380,16 @@ def test_dataset_follower_profile_and_native_protocols_are_route_specific() -> N
     )
 
 
+@pytest.mark.parametrize("mode", ["sync", "async"])
+def test_dataset_native_protocols_accept_concrete_services(mode: str) -> None:
+    if mode == "sync":
+        client = SyncUDataClient(RouterTransport({}), declared_udata_profile(), origin=ORIGIN)
+        assert isinstance(client.datasets, SyncUDataDatasetsService)
+    else:
+        async_client = AsyncUDataClient(RouterAsyncTransport({}), declared_udata_profile(), origin=ORIGIN)
+        assert isinstance(async_client.datasets, AsyncUDataDatasetsService)
+
+
 def test_dataset_follower_paths_encode_raw_identifiers_once() -> None:
     identifier = "raw%2F ü"
     path = "/api/1/datasets/raw%252F%20%C3%BC/followers/"
@@ -379,7 +405,7 @@ def test_dataset_follower_dispatch_failure_keeps_its_receipt_without_a_retry(
     mode: str, method: str, failure: type[BaseException], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     operation = FOLLOW if method == "follow_dataset" else UNFOLLOW
-    transport = _transport(mode, {})
+    transport = _transport(mode, {("POST" if method == "follow_dataset" else "DELETE", ORIGIN + PATH): None})
     if isinstance(transport, RouterTransport):
         original = transport.send
 
@@ -410,7 +436,9 @@ def test_dataset_follower_dispatch_failure_keeps_its_receipt_without_a_retry(
 @pytest.mark.parametrize("method", ["follow_dataset", "unfollow_dataset"])
 def test_dataset_follower_cancellation_keeps_its_receipt(method: str, monkeypatch: pytest.MonkeyPatch) -> None:
     operation = FOLLOW if method == "follow_dataset" else UNFOLLOW
-    transport = RouterAsyncTransport(_site_first({}))
+    transport = RouterAsyncTransport(
+        _site_first({("POST" if method == "follow_dataset" else "DELETE", ORIGIN + PATH): None})
+    )
     original = transport.send
 
     async def send(request: RuntimeRequest) -> RuntimeResponse:
